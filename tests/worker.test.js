@@ -220,6 +220,48 @@ test('retains tombstones until every known device acknowledges the deletion revi
   assert.equal((await body(fetched)).state.sessions.gone, undefined);
 });
 
+test('legacy protocol writes block tombstone pruning until rotation', async () => {
+  const runtime = env();
+  const legacyPut = await call('/api/sync', {
+    method: 'PUT', headers: { authorization: `Bearer ${code}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ state: stateWith('gone', 'A', 'legacy-device') })
+  }, runtime);
+  assert.equal(legacyPut.status, 200);
+
+  const deleted = stateWith('gone', 'A', 'device-a');
+  deleted.sessions.gone.deleted = true;
+  deleted.sessions.gone.deletedAt = Date.now();
+  deleted.sessions.gone.updatedAt = Date.now() + 1;
+  const deletePut = await call('/api/sync', {
+    method: 'PUT', headers: { authorization: `Bearer ${code}`, 'content-type': 'application/json' },
+    body: JSON.stringify(await protocol2('device-a', 1, deleted))
+  }, runtime);
+  assert.equal(deletePut.status, 200);
+
+  const acknowledged = await call('/api/sync', {
+    method: 'PUT', headers: { authorization: `Bearer ${code}`, 'content-type': 'application/json' },
+    body: JSON.stringify(await protocol2('device-a', 2, deleted, false))
+  }, runtime);
+  assert.equal(acknowledged.status, 200);
+  const blocked = await call('/api/sync/prune', {
+    method: 'POST', headers: { authorization: `Bearer ${code}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ deviceId: 'device-a', acknowledgedRevision: 2, deviceProof: await deviceAcknowledgementProof(deviceSecrets.get('device-a'), 'device-a', 2) })
+  }, runtime);
+  assert.equal(blocked.status, 409);
+  assert.equal((await body(blocked)).error, 'tombstones_retained');
+  assert.equal((await body(await call('/api/sync', { headers: { authorization: `Bearer ${code}` } }, runtime))).state.sessions.gone.deleted, true);
+
+  const rotated = await call('/api/sync/rotate', { method: 'POST', headers: { authorization: `Bearer ${code}` } }, runtime);
+  const replacement = await body(rotated);
+  assert.equal(rotated.status, 200);
+  const pruned = await call('/api/sync/prune', {
+    method: 'POST', headers: { authorization: `Bearer ${replacement.code}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ deviceId: 'device-a', acknowledgedRevision: 2, deviceProof: await deviceAcknowledgementProof(deviceSecrets.get('device-a'), 'device-a', 2) })
+  }, runtime);
+  assert.equal(pruned.status, 200);
+  assert.equal((await body(await call('/api/sync', { headers: { authorization: `Bearer ${replacement.code}` } }, runtime))).state.sessions.gone, undefined);
+});
+
 test('rate limits repeated sync requests without revealing bearer material', async () => {
   const runtime = env();
   let last;

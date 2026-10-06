@@ -39,8 +39,10 @@ function normalizeDevices(devices) {
     }));
 }
 
-function acknowledgementMap(devices) {
-  return Object.fromEntries(Object.entries(devices).map(([deviceId, entry]) => [deviceId, entry.acknowledgedRevision]));
+function acknowledgementMap(devices, legacyParticipant = false) {
+  const acknowledgements = Object.fromEntries(Object.entries(devices).map(([deviceId, entry]) => [deviceId, entry.acknowledgedRevision]));
+  if (legacyParticipant) acknowledgements['legacy-participant'] = -1;
+  return acknowledgements;
 }
 
 function withDevice(state, deviceId) {
@@ -93,6 +95,7 @@ export class SyncCoordinator {
       imported: Boolean(value.imported),
       revoked: Boolean(value.revoked),
       devices: normalizeDevices(value.devices),
+      legacyParticipant: Boolean(value.legacyParticipant),
       replacement: value.replacement ?? null,
       migrationError: value.migrationError ?? null
     };
@@ -160,7 +163,7 @@ export class SyncCoordinator {
       const devices = normalizeDevices(body.devices);
       if (Object.keys(devices).length > MAX_DEVICES) return response({ error: 'too_many_devices' }, 422);
       const revision = Math.max(meta.revision, Number.isInteger(body.revision) && body.revision >= 0 ? body.revision : 0);
-      const nextMeta = { ...meta, imported: true, revision, devices };
+      const nextMeta = { ...meta, imported: true, revision, devices, legacyParticipant: false };
       const result = await this.save(state, nextMeta);
       return result ?? response({ state, revision, devices });
     }
@@ -168,7 +171,7 @@ export class SyncCoordinator {
       const body = await request.json().catch(() => null);
       const replacement = body?.replacement ?? meta.replacement;
       await this.clearLegacy(request);
-      const next = { ...meta, revoked: true, replacement: replacement ?? null, devices: {} };
+      const next = { ...meta, revoked: true, replacement: replacement ?? null, devices: {}, legacyParticipant: false };
       await this.storage.put('meta', next);
       await this.storage.delete('state');
       return response({ ok: true, replacement });
@@ -176,7 +179,7 @@ export class SyncCoordinator {
     if (url.pathname === '/internal/delete' && request.method === 'DELETE') {
       await this.clearLegacy(request);
       await this.storage.delete('state');
-      await this.storage.put('meta', { ...meta, revoked: true, replacement: null, devices: {} });
+      await this.storage.put('meta', { ...meta, revoked: true, replacement: null, devices: {}, legacyParticipant: false });
       return response({ ok: true });
     }
     if (url.pathname === '/internal/prune' && request.method === 'POST') {
@@ -191,7 +194,7 @@ export class SyncCoordinator {
       const state = await this.load(request, meta);
       if (Object.keys(meta.devices).length > MAX_DEVICES) return response({ error: 'too_many_devices' }, 422);
       const devices = { ...meta.devices, [deviceId]: { ...entry, acknowledgedRevision: Math.max(entry.acknowledgedRevision, acknowledgedRevision) } };
-      if (!canPruneTombstones(state, acknowledgementMap(devices))) return response({ error: 'tombstones_retained', revision: meta.revision }, 409);
+      if (!canPruneTombstones(state, acknowledgementMap(devices, meta.legacyParticipant))) return response({ error: 'tombstones_retained', revision: meta.revision }, 409);
       const pruned = {
         ...state,
         sessions: Object.fromEntries(Object.entries(state.sessions).filter(([, record]) => !record.deleted)),
@@ -238,7 +241,7 @@ export class SyncCoordinator {
     const merged = stampDeletionRevision(mergedCandidate, current, incoming, revision);
     const deviceIds = Object.keys(devices);
     if (deviceIds.length > MAX_DEVICES) return response({ error: 'too_many_devices' }, 422);
-    const nextMeta = { ...meta, imported: true, revision, devices };
+    const nextMeta = { ...meta, imported: true, revision, devices, legacyParticipant: meta.legacyParticipant || protocol === 1 };
     const saved = await this.save(merged, nextMeta);
     if (saved) return saved;
     return response({ protocol: 2, state: merged, revision, stats: stateStats(merged) });
