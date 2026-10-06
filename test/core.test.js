@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import { addDays, daysBetween, weekStart } from '../src/lib/dates.js';
 import { emptyState, isValidState, mergeStates } from '../src/lib/merge.js';
-import { buildIntervals, getBlock, TEMPLATES } from '../src/lib/program.js';
+import { buildIntervals, getBlock } from '../src/lib/program.js';
 import { blockStatus, nextTemplateIndex, sessionsByDate, streak, weeklyPatternSets } from '../src/lib/stats.js';
 
 test('date helpers handle calendar boundaries and Monday weeks', () => {
@@ -83,6 +83,3 @@ test('blockStatus recommends advancing a completed, consistent block', () => {
   assert.match(status.reasons.join(' '), /improved from 30\.0s to 40\.0s/);
 });
 
-test('all published templates contain five intervals', () => {
-  assert.equal(TEMPLATES.every((template) => template.intervals.length === 5), true);
-});

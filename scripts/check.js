@@ -15,6 +15,8 @@ for (const [id, exercise] of Object.entries(EXERCISES)) {
   }
 }
 
+assert.ok(TEMPLATES.length > 0, 'template catalog must not be empty');
+
 for (const [templateIndex, template] of TEMPLATES.entries()) {
   assert.equal(template.intervals.length, 5, `template ${template.id} must have five intervals`);
   const sidePlanks = template.intervals.filter((interval) => interval.ex === 'sideplank');
