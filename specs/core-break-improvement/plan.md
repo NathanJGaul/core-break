@@ -3,7 +3,7 @@
 ## Decisions
 - Keep accountless 32-character base32 bearer codes. Rotation is the lifecycle boundary; no accounts or automatic expiry.
 - Use schema 2 with strict allow-listed nested records and `deletedAt`, `writerId`, and `opId` metadata. Migrate v1 only when records validate.
-- Use Durable Objects as the sole live merge/write authority. Normalize the DO name from the existing SHA-256 code hash. Legacy KV is imported once per object and left untouched as rollback/backup.
+- Use Durable Objects as the sole live merge/write authority. Normalize the DO name from the existing SHA-256 code hash. Legacy KV is imported once per object and retained only until rotation or remote deletion.
 - Keep synchronized values plaintext and state this plainly in README and Settings. Do not claim hashed KV keys encrypt values.
 - Retain tombstones by default. A prune endpoint is explicit and refuses unsafe deletion unless the caller supplies acknowledgements for all known devices.
 - Use Node's built-in `node:test` runner without adding dependencies. Tests use real Worker fetch entry points and an in-memory Durable Object/KV harness.

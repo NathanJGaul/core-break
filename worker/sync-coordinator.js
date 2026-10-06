@@ -39,6 +39,19 @@ function normalizeDevices(devices) {
     }));
 }
 
+function hasLegacyDeviceEntries(devices) {
+  return Boolean(devices && typeof devices === 'object' && !Array.isArray(devices) && Object.values(devices).some((entry) => Number.isInteger(entry) && entry >= 0));
+}
+
+function hasLegacyWriter(state) {
+  return [
+    ...Object.values(state.sessions ?? {}),
+    ...Object.values(state.tests ?? {}),
+    state.program,
+    state.settings
+  ].some((record) => record?.writerId === 'legacy' || record?.writerId === 'legacy-client');
+}
+
 function acknowledgementMap(devices, legacyParticipant = false) {
   const acknowledgements = Object.fromEntries(Object.entries(devices).map(([deviceId, entry]) => [deviceId, entry.acknowledgedRevision]));
   if (legacyParticipant) acknowledgements['legacy-participant'] = -1;
@@ -95,7 +108,7 @@ export class SyncCoordinator {
       imported: Boolean(value.imported),
       revoked: Boolean(value.revoked),
       devices: normalizeDevices(value.devices),
-      legacyParticipant: Boolean(value.legacyParticipant),
+      legacyParticipant: Boolean(value.legacyParticipant) || hasLegacyDeviceEntries(value.devices),
       replacement: value.replacement ?? null,
       migrationError: value.migrationError ?? null
     };
@@ -103,7 +116,13 @@ export class SyncCoordinator {
 
   async load(request, meta) {
     const stored = await this.storage.get('state');
-    if (stored) return migrateState(stored);
+    if (stored) {
+      const migrated = migrateState(stored);
+      if (!meta.legacyParticipant && (stored.schema === 1 || hasLegacyWriter(migrated))) {
+        await this.storage.put('meta', { ...meta, legacyParticipant: true });
+      }
+      return migrated;
+    }
     if (!meta.imported && this.env.SYNC) {
       const key = request.headers.get('x-legacy-key');
       if (key) {
@@ -112,7 +131,7 @@ export class SyncCoordinator {
           try {
             const migrated = migrateState(legacy);
             await this.storage.put('state', migrated);
-            await this.storage.put('meta', { ...meta, imported: true });
+            await this.storage.put('meta', { ...meta, imported: true, legacyParticipant: true });
             return migrated;
           } catch (error) {
             await this.storage.put('meta', { ...meta, imported: true, migrationError: error.code ?? 'invalid_state' });

@@ -239,7 +239,10 @@ function compareRecords(a, b) {
 function mergeRecords(a = {}, b = {}) {
   const out = { ...a };
   for (const [id, record] of Object.entries(b)) {
-    if (!out[id] || compareRecords(record, out[id]) > 0) out[id] = record;
+    const existing = out[id];
+    const incomingDeleted = Boolean(record.deleted);
+    const existingDeleted = Boolean(existing?.deleted);
+    if (!existing || (incomingDeleted && !existingDeleted) || (incomingDeleted === existingDeleted && compareRecords(record, existing) > 0)) out[id] = record;
   }
   return out;
 }
