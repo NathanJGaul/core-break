@@ -62,8 +62,34 @@ function coordinator(env, name) {
 }
 
 async function parseBody(request) {
-  const bytes = await request.arrayBuffer();
-  if (bytes.byteLength > MAX_REQUEST_BYTES) return { error: 'too_large', status: 413 };
+  const declared = Number(request.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > MAX_REQUEST_BYTES) return { error: 'too_large', status: 413 };
+
+  const reader = request.body?.getReader();
+  if (!reader) return { error: 'invalid_json', status: 400 };
+  const chunks = [];
+  let length = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      length += value.byteLength;
+      if (length > MAX_REQUEST_BYTES) {
+        await reader.cancel();
+        return { error: 'too_large', status: 413 };
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const bytes = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
   try {
     return { body: JSON.parse(new TextDecoder().decode(bytes)) };
   } catch {

@@ -15,7 +15,7 @@
 - [x] Timer logic and existing five-minute product wording remain unchanged; measured 4:30–5:00 sessions are accepted.
 - [x] Service-worker cache is versioned/cleaned and app update notice is wired; API requests remain uncached.
 - [x] Node >=22, `npm test`, local `npm run check`, deploy placeholder guard, Wrangler DO binding/migration, README, and test artifacts are present.
-- [x] `npm test` (28 passing), `npm run check`, `npm run build`, and local Worker health/auth smoke passed.
+- [x] `npm test` (33 passing), `npm run check`, `npm run build`, and local Worker health/auth smoke passed.
 
 ## Explicit limits
 
