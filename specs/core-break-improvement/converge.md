@@ -19,7 +19,7 @@ Implementation is converged for this isolated branch and the requested local v1 
 
 ## Risks and follow-up gates
 
-- Real Cloudflare bindings, limits, and propagation are unknown because no production deployment was requested. The configuration preflight remains intentionally blocked by the placeholder.
+- Real Cloudflare bindings, limits, and propagation are unknown because no production deployment was requested. The deployment-mode configuration preflight remains intentionally blocked by the placeholder; local mode permits it.
 - Browser PWA update/offline/storage quota behavior needs manual verification in a real browser before any operator deployment.
 - If encryption is later approved, it requires a new per-record protocol migration; plaintext wording must remain until that migration completes.
 - Retention policy remains conservative: no automatic tombstone GC or inactivity expiry.

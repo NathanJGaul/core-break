@@ -13,4 +13,4 @@
 - `node --test tests/merge.test.js` and `node --test tests/storage.test.js` were run as focused file cycles; `npm test` completed 34 passing tests and 0 failures after the final changes.
 - `npm run check` passed in local mode; `npm run build` passed; local Worker health returned 200 with version 2.0.0 and API auth returned 401.
 - No coverage, mutation, property-based, browser, contract, snapshot, or watch runner is installed. Deliberate mutants cover the highest-risk comparator and tombstone invariants; browser/service-worker update behavior remains a manual smoke surface.
-- No production deployment or live Cloudflare resource validation was performed. The configuration preflight correctly fails on the repository's explicit placeholder KV ID.
+- No production deployment or live Cloudflare resource validation was performed. The deployment-mode configuration preflight correctly fails on the repository's explicit placeholder KV ID; local mode permits it.

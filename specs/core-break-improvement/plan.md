@@ -18,7 +18,7 @@
 - `worker/index.js` owns request parsing, body byte limits, bearer normalization, stable errors, request IDs, security headers, a bounded per-isolate failed/sync request bucket, health, and DO routing.
 - `worker/sync-coordinator.js` exports the Durable Object class and pure testable helpers. Worker forwards API calls with normalized code and legacy KV binding context; it never independently merges or writes live data.
 - Routes: GET/PUT/DELETE `/api/sync`, POST `/api/sync/rotate`, POST `/api/sync/prune`, and GET `/api/health`.
-- All responses are `no-store`; logs contain request ID, route, method, status, duration, byte/count buckets, revision/migration placeholders when unavailable, and stable error code only.
+- API responses are `no-store`; asset responses retain their asset cache metadata while receiving security headers. Logs contain request ID, route, method, status, duration, byte/count buckets, revision/migration placeholders when unavailable, and stable error code only.
 
 ## Client and UI
 - `src/lib/store.svelte.js` migrates/validates local state, adds stable device ID and revision, preserves local-first commits, reports storage failures, retries sync, and exposes rotate/delete operations.
