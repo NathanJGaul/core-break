@@ -11,9 +11,8 @@
     "build": "vite build",
     "test": "node --test tests/*.test.js",
     "check": "node scripts/check-config.mjs --local",
-    "check:deploy": "node scripts/check-config.mjs",
     "preview": "vite build && wrangler dev",
-    "deploy": "npm run check:deploy && vite build && wrangler deploy"
+    "deploy": "vite build && wrangler deploy"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.3.1",

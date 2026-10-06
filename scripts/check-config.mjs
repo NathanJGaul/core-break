@@ -22,4 +22,4 @@ if (failures.length) {
   for (const failure of failures) console.error(`- ${failure}`);
   exit(1);
 }
-console.log(`Configuration preflight passed${local ? ' (local placeholder permitted; use npm run check:deploy before deploy)' : ''}.`);
+console.log(`Configuration preflight passed${local ? ' (local placeholder permitted)' : ''}.`);

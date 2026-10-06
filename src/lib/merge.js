@@ -16,7 +16,6 @@ const TEST_KINDS = new Set(['baseline', 'retest', 'block-end', 'extra']);
 const EXERCISES = new Set(['hollow', 'deadbug', 'sideplank', 'bicycle', 'reverse']);
 const SIDES = new Set(['left', 'right']);
 const DECISIONS = new Set(['advance', 'repeat']);
-const KEY_RE = /^[A-Za-z0-9_-]{1,96}$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
 

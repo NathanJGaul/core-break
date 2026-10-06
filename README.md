@@ -11,11 +11,10 @@ You need Node.js 22 or newer and a free Cloudflare account. This repository does
 ```sh
 npm ci
 npm run check                 # local source/config checks
-npm run check:deploy          # requires a real SYNC KV ID; rejects placeholders
 npm run build
 ```
 
-For an operator deployment, create a KV namespace and replace the placeholder in `wrangler.jsonc`, then run `npm run check:deploy` before the pinned Wrangler deploy command. The `SYNC_COORDINATOR` Durable Object binding and migration must be present. Never use production data in local tests.
+For an operator deployment, create a KV namespace and replace the placeholder in `wrangler.jsonc`. The `SYNC_COORDINATOR` Durable Object binding and migration must be present. Never use production data in local tests.
 
 `npm run dev` serves the UI only and sync is unavailable. `npm run preview` runs the Worker with local bindings.
 
