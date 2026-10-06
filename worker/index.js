@@ -154,7 +154,7 @@ async function handleRotate(request, env, id) {
   const imported = await newCoordinator.fetch(new Request('https://coordinator.internal/internal/import', {
     method: 'PUT',
     headers: { 'content-type': 'application/json', 'x-sync-code': replacement },
-    body: JSON.stringify({ state: exported.state, revision: exported.revision, devices: exported.devices })
+    body: JSON.stringify({ state: exported.state, revision: exported.revision, devices: exported.devices, pruned: exported.pruned })
   }));
   if (!imported.ok) return json({ error: 'rotation_failed' }, 503, id, env);
   const revoked = await oldCoordinator.fetch(new Request('https://coordinator.internal/internal/revoke', {

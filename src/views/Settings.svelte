@@ -2,7 +2,7 @@
   import QRCode from 'qrcode';
   import {
     app, sync, syncNow, setSyncCode, normalizeCode, formatCode, generateCode,
-    rotateSyncCode, deleteRemoteData, updateSettings, exportData, resetProgram
+    rotateSyncCode, deleteRemoteData, pruneTombstones, updateSettings, exportData, resetProgram
   } from '../lib/store.svelte.js';
   import { unlockAudio, beep } from '../lib/audio.js';
 
@@ -118,6 +118,12 @@
         </button>
       </div>
     {/if}
+
+    <div class="mt-6">
+      <p class="text-sm font-semibold">Clean up deleted history</p>
+      <p class="mt-1 text-sm opacity-60">Removes deleted records after every known device has acknowledged them. Devices that have not synced keep cleanup blocked.</p>
+      <button class="btn btn-ghost btn-sm mt-2 px-0" onclick={() => pruneTombstones()} disabled={sync.status === 'syncing'}>Clean up deleted history</button>
+    </div>
 
     <div class="mt-6">
       <label class="text-sm font-semibold" for="join">Use a code from another device instead</label>

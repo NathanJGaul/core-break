@@ -1,4 +1,4 @@
-import { emptyState, mergeStates, migrateState, validateState, createDeviceSecret, deviceAcknowledgementProof } from './merge.js';
+import { emptyState, mergeStates, migrateState, reconcilePrunedState, createDeviceSecret, deviceAcknowledgementProof } from './merge.js';
 import { readItem as readStorageItem, writeItem as writeStorageItem } from './storage.js';
 import { localDate } from './dates.js';
 
@@ -136,9 +136,7 @@ export async function syncNow() {
         return;
       }
       const migrated = migrateState(body.state);
-      const validation = validateState(migrated);
-      if (!validation.ok) throw new Error(validation.code);
-      app.data = mergeStates($state.snapshot(app.data), migrated);
+      app.data = mergeStates(reconcilePrunedState($state.snapshot(app.data), body.pruned), migrated);
       if (!saveLocal()) {
         sync.status = 'error';
         sync.errorCode = 'local_storage_unavailable';
@@ -165,6 +163,54 @@ export async function syncNow() {
     }
   })();
   return inFlight;
+}
+
+export async function pruneTombstones() {
+  if (inFlight) await inFlight;
+  if (!sync.code) return false;
+  sync.status = 'syncing';
+  sync.message = '';
+  sync.errorCode = '';
+  try {
+    const deviceProof = await deviceAcknowledgementProof(sync.deviceSecret, sync.deviceId, sync.revision);
+    const res = await fetch('/api/sync/prune', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${sync.code}` },
+      body: JSON.stringify({ deviceId: sync.deviceId, acknowledgedRevision: sync.revision, deviceProof })
+    });
+    const body = await res.json().catch(() => null);
+    if (!res.ok || !body?.state) {
+      sync.errorCode = body?.error ?? `http_${res.status}`;
+      sync.status = res.status === 410 ? 'revoked' : 'error';
+      sync.message = {
+        revoked_code: 'This sync code was revoked. Use a current code or connect a new device.',
+        tombstones_retained: 'Deleted history is still needed by another device. Sync that device before cleanup.',
+        invalid_acknowledgement: 'This device needs to sync before cleanup can continue.'
+      }[sync.errorCode] ?? `Cleanup failed (${sync.errorCode}). Changes remain on this device; retry when ready.`;
+      return false;
+    }
+    const migrated = migrateState(body.state);
+    app.data = mergeStates(reconcilePrunedState($state.snapshot(app.data), body.pruned), migrated);
+    if (!saveLocal()) {
+      sync.status = 'error';
+      sync.errorCode = 'local_storage_unavailable';
+      sync.message = 'Device storage is full or unavailable. Download a backup; cleanup is paused until storage recovers.';
+      return false;
+    }
+    sync.revision = Number(body.revision) || sync.revision;
+    writeItem(REVISION_KEY, String(sync.revision));
+    sync.status = 'ok';
+    sync.lastSynced = Date.now();
+    writeItem(SYNC_AT_KEY, String(sync.lastSynced));
+    return true;
+  } catch (error) {
+    sync.errorCode = error?.message || 'network_error';
+    sync.status = typeof navigator !== 'undefined' && navigator.onLine === false ? 'offline' : 'error';
+    sync.message = sync.status === 'offline'
+      ? 'You are offline. Changes are saved on this device and cleanup will retry later.'
+      : 'Could not reach the sync server. Changes are saved on this device; retry cleanup when ready.';
+    return false;
+  }
 }
 
 export function setSyncCode(code) {

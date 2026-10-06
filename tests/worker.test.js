@@ -301,6 +301,16 @@ test('retains tombstones until every known device acknowledges the deletion revi
     body: JSON.stringify({ deviceId: 'device-a', acknowledgedRevision: 2, deviceProof: await deviceAcknowledgementProof(deviceSecrets.get('device-a'), 'device-a', 2) })
   }, runtime);
   assert.equal(pruned.status, 200);
+  const prunedBody = await body(pruned);
+  assert.equal(prunedBody.state.sessions.gone, undefined);
+  assert.ok(prunedBody.pruned.sessions.gone);
+  const stale = stateWith('gone', 'A', 'device-a');
+  stale.sessions.gone.updatedAt = 1;
+  const stalePut = await call('/api/sync', {
+    method: 'PUT', headers: { authorization: `Bearer ${code}`, 'content-type': 'application/json' },
+    body: JSON.stringify(await protocol2('device-a', prunedBody.revision, stale, false))
+  }, runtime);
+  assert.equal(stalePut.status, 200);
   const fetched = await call('/api/sync', { headers: { authorization: `Bearer ${code}` } }, runtime);
   assert.equal((await body(fetched)).state.sessions.gone, undefined);
 });

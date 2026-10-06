@@ -37,6 +37,7 @@ const {
   normalizeCode,
   setSyncCode,
   syncNow,
+  pruneTombstones,
   rotateSyncCode,
   deleteRemoteData,
   logSession,
@@ -106,6 +107,37 @@ test('syncNow reports local storage failure and offline network failure', async 
   assert.equal(sync.status, 'offline');
   assert.match(sync.message, /offline/i);
   Object.defineProperty(globalThis.navigator, 'onLine', { configurable: true, value: true });
+});
+
+test('prune reconciles local tombstones with the authoritative server response', async () => {
+  reset();
+  sync.code = code;
+  const tombstone = {
+    id: 'gone',
+    updatedAt: 2,
+    writerId: 'device-a',
+    opId: 'delete-gone',
+    deleted: true,
+    deletedAt: 2,
+    deletedRevision: 1,
+    date: '2026-10-06',
+    blockStart: '2026-10-01',
+    template: 'A',
+    block: 0,
+    form: 'clean',
+    intervals: Array.from({ length: 5 }, () => ({ ex: 'hollow', work: 20, done: true }))
+  };
+  app.data.sessions.gone = tombstone;
+  let request;
+  globalThis.fetch = async (url, options) => {
+    request = { url, body: JSON.parse(options.body) };
+    return new Response(JSON.stringify({ state: emptyState(), revision: 2, pruned: { sessions: { gone: tombstone }, tests: {} } }), { status: 200 });
+  };
+  assert.equal(await pruneTombstones(), true);
+  assert.equal(request.url, '/api/sync/prune');
+  assert.equal(request.body.acknowledgedRevision, 0);
+  assert.equal(app.data.sessions.gone, undefined);
+  assert.equal(sync.revision, 2);
 });
 
 test('rotation and remote deletion update the persisted sync lifecycle', async () => {

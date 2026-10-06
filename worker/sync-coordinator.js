@@ -6,6 +6,7 @@ import {
   validateState,
   stateStats,
   canPruneTombstones,
+  reconcilePrunedState,
   verifyDeviceAcknowledgement,
   MAX_DEVICES
 } from '../src/lib/merge.js';
@@ -50,6 +51,17 @@ function hasLegacyWriter(state) {
     state.program,
     state.settings
   ].some((record) => record?.writerId === 'legacy' || record?.writerId === 'legacy-client');
+}
+
+function normalizePruned(value) {
+  const normalizeMap = (map) => {
+    if (!map || typeof map !== 'object' || Array.isArray(map)) return {};
+    return Object.fromEntries(Object.entries(map).filter(([, record]) => record && typeof record === 'object' && !Array.isArray(record)));
+  };
+  return {
+    sessions: normalizeMap(value?.sessions),
+    tests: normalizeMap(value?.tests)
+  };
 }
 
 function acknowledgementMap(devices, legacyParticipant = false) {
@@ -110,14 +122,15 @@ export class SyncCoordinator {
       devices: normalizeDevices(value.devices),
       legacyParticipant: Boolean(value.legacyParticipant) || hasLegacyDeviceEntries(value.devices),
       replacement: value.replacement ?? null,
-      migrationError: value.migrationError ?? null
+      migrationError: value.migrationError ?? null,
+      pruned: normalizePruned(value.pruned)
     };
   }
 
   async load(request, meta) {
     const stored = await this.storage.get('state');
     if (stored) {
-      const migrated = migrateState(stored);
+      const migrated = reconcilePrunedState(migrateState(stored), meta.pruned);
       if (!meta.legacyParticipant && (stored.schema === 1 || hasLegacyWriter(migrated))) {
         meta.legacyParticipant = true;
         await this.storage.put('meta', { ...meta });
@@ -179,18 +192,19 @@ export class SyncCoordinator {
 
     if (url.pathname === '/internal/export' && request.method === 'GET') {
       const state = await this.load(request, meta);
-      return response({ state, revision: meta.revision, replacement: meta.replacement, devices: meta.devices });
+      return response({ state, revision: meta.revision, replacement: meta.replacement, devices: meta.devices, pruned: meta.pruned });
     }
     if (url.pathname === '/internal/import' && request.method === 'PUT') {
       const body = await request.json().catch(() => null);
       if (!body?.state) return response({ error: 'invalid_state' }, 422);
-      const state = migrateState(body.state);
+      const pruned = normalizePruned(body.pruned);
+      const state = reconcilePrunedState(migrateState(body.state), pruned);
       const devices = normalizeDevices(body.devices);
       if (Object.keys(devices).length > MAX_DEVICES) return response({ error: 'too_many_devices' }, 422);
       const revision = Math.max(meta.revision, Number.isInteger(body.revision) && body.revision >= 0 ? body.revision : 0);
-      const nextMeta = { ...meta, imported: true, revision, devices, legacyParticipant: false };
+      const nextMeta = { ...meta, imported: true, revision, devices, legacyParticipant: false, pruned };
       const result = await this.save(state, nextMeta);
-      return result ?? response({ state, revision, devices });
+      return result ?? response({ state, revision, devices, pruned });
     }
     if (url.pathname === '/internal/revoke' && request.method === 'POST') {
       const body = await request.json().catch(() => null);
@@ -204,7 +218,7 @@ export class SyncCoordinator {
     if (url.pathname === '/internal/delete' && request.method === 'DELETE') {
       await this.clearLegacy(request);
       await this.storage.delete('state');
-      await this.storage.put('meta', { ...meta, revoked: true, replacement: null, devices: {}, legacyParticipant: false });
+      await this.storage.put('meta', { ...meta, revoked: true, replacement: null, devices: {}, legacyParticipant: false, pruned: { sessions: {}, tests: {} } });
       return response({ ok: true });
     }
     if (url.pathname === '/internal/prune' && request.method === 'POST') {
@@ -216,7 +230,7 @@ export class SyncCoordinator {
       if (!DEVICE_RE.test(deviceId) || !Number.isInteger(acknowledgedRevision) || acknowledgedRevision < 0 || acknowledgedRevision > meta.revision || !PROOF_RE.test(proof) || !entry?.secret || !await verifyDeviceAcknowledgement(entry.secret, deviceId, acknowledgedRevision, proof)) {
         return response({ error: 'invalid_acknowledgement' }, 422);
       }
-      const state = await this.load(request, meta);
+      const state = reconcilePrunedState(await this.load(request, meta), meta.pruned);
       if (Object.keys(meta.devices).length > MAX_DEVICES) return response({ error: 'too_many_devices' }, 422);
       const devices = { ...meta.devices, [deviceId]: { ...entry, acknowledgedRevision: Math.max(entry.acknowledgedRevision, acknowledgedRevision) } };
       if (!canPruneTombstones(state, acknowledgementMap(devices, meta.legacyParticipant))) return response({ error: 'tombstones_retained', revision: meta.revision }, 409);
@@ -225,15 +239,24 @@ export class SyncCoordinator {
         sessions: Object.fromEntries(Object.entries(state.sessions).filter(([, record]) => !record.deleted)),
         tests: Object.fromEntries(Object.entries(state.tests).filter(([, record]) => !record.deleted))
       };
+      const markers = {
+        sessions: { ...meta.pruned.sessions },
+        tests: { ...meta.pruned.tests }
+      };
+      for (const [id, record] of Object.entries(state.sessions)) if (record.deleted) markers.sessions[id] = record;
+      for (const [id, record] of Object.entries(state.tests)) if (record.deleted) markers.tests[id] = record;
       const revision = meta.revision + 1;
-      const saved = await this.save(pruned, { ...meta, revision, devices });
-      if (saved) return saved;
-      return response({ protocol: 2, state: pruned, revision, stats: stateStats(pruned) });
+      const nextMeta = { ...meta, revision, devices, pruned: markers };
+      const validation = validateState(pruned);
+      if (!validation.ok) return response({ error: validation.code }, validation.code === 'too_large' ? 413 : 422);
+      await this.storage.put('meta', nextMeta);
+      await this.storage.put('state', pruned);
+      return response({ protocol: 2, state: pruned, revision, pruned: markers, stats: stateStats(pruned) });
     }
 
     if (request.method === 'GET') {
       const state = await this.load(request, meta);
-      return response({ protocol: 2, state, revision: meta.revision, stats: stateStats(state) });
+      return response({ protocol: 2, state, revision: meta.revision, pruned: meta.pruned, stats: stateStats(state) });
     }
     if (request.method !== 'PUT') return response({ error: 'method_not_allowed' }, 405);
 
@@ -244,8 +267,8 @@ export class SyncCoordinator {
     if (protocol === 2 && (!DEVICE_RE.test(String(body.deviceId ?? '')) || !Number.isInteger(body.lastRevision) || body.lastRevision < 0 || body.lastRevision > meta.revision || !PROOF_RE.test(String(body.deviceProof ?? '')))) return response({ error: 'invalid_acknowledgement' }, 422);
     const validation = validateState(body.state);
     if (!validation.ok) return response({ error: validation.code }, validation.code === 'too_large' ? 413 : 422);
-    const incoming = withDevice(migrateState(body.state), body.deviceId || 'legacy-client');
-    const current = await this.load(request, meta);
+    const incoming = reconcilePrunedState(withDevice(migrateState(body.state), body.deviceId || 'legacy-client'), meta.pruned);
+    const current = reconcilePrunedState(await this.load(request, meta), meta.pruned);
     let devices = meta.devices;
     if (protocol === 2) {
       const deviceId = body.deviceId;
@@ -269,7 +292,7 @@ export class SyncCoordinator {
     const nextMeta = { ...meta, imported: true, revision, devices, legacyParticipant: meta.legacyParticipant || protocol === 1 };
     const saved = await this.save(merged, nextMeta);
     if (saved) return saved;
-    return response({ protocol: 2, state: merged, revision, stats: stateStats(merged) });
+    return response({ protocol: 2, state: merged, revision, pruned: meta.pruned, stats: stateStats(merged) });
   }
 }
 

@@ -26,7 +26,7 @@ Drop only hosts static files, so it can't store sync data. If you ever want a qu
 
 1. On the first device, open **Settings → Show code and QR**.
 2. Scan the QR code with the second device's camera, or copy the connect link and open it there. You can also paste the code into the onboarding screen or Settings.
-3. Tap **Connect**. Logs from both devices are merged; tombstones are retained so an offline device cannot resurrect a deletion.
+3. Tap **Connect**. Logs from both devices are merged; tombstones are retained so an offline device cannot resurrect a deletion. Use **Settings → Clean up deleted history** after every known device has synced; cleanup carries durable markers so later stale writes cannot resurrect those records.
 
 Your sync code works like a bearer password: anyone who has it can read and change your logs. It is not an account or account-recovery credential. The server stores data under a SHA-256 hash of the code, never the code itself, but synchronized KV values are plaintext to the service operator (the hash is not encryption). Use **Settings → Rotate shared code** when a device should lose access, and **Settings → Delete synced data** for remote deletion. Turning sync off only removes this device's code; it does not delete server data.
 
@@ -69,7 +69,7 @@ To change exercises, cues, templates or block timings, edit `src/lib/program.js`
 ## Data and limits
 
 - Everything is saved on the device first, so sessions work offline. Changes sync about 2 seconds after they happen, and whenever the app comes back into view.
-- Sync state is schema-validated and bounded. Tombstones are not automatically garbage-collected while an offline device may still exist; export/prune policy is explicit.
+- Sync state is schema-validated and bounded. Tombstones are not automatically garbage-collected while an offline device may still exist; **Settings → Clean up deleted history** is explicit, acknowledgement-gated, and preserves durable prune markers against stale writes.
 - Durable Objects serialize the live merge per hashed sync code. Legacy KV is a validated import/backup source during migration, not a concurrent live merge path.
 - **Settings → Download backup** saves all your data as JSON.
 

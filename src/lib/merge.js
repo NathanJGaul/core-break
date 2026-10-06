@@ -235,6 +235,22 @@ function compareRecords(a, b) {
   return aKey === bKey ? 0 : aKey > bKey ? 1 : -1;
 }
 
+export function reconcilePrunedState(state, pruned = {}) {
+  const recordsFor = (kind) => {
+    const records = isObject(state?.[kind]) ? state[kind] : {};
+    const markers = isObject(pruned?.[kind]) ? pruned[kind] : {};
+    return Object.fromEntries(Object.entries(records).filter(([id, record]) => {
+      const marker = markers[id];
+      return !isObject(marker) || compareRecords(record, marker) > 0;
+    }));
+  };
+  return {
+    ...state,
+    sessions: recordsFor('sessions'),
+    tests: recordsFor('tests')
+  };
+}
+
 function mergeRecords(a = {}, b = {}) {
   const out = { ...a };
   for (const [id, record] of Object.entries(b)) {
