@@ -264,17 +264,18 @@ function mergeRecords(a = {}, b = {}) {
 
 export function mergeStates(a, b) {
   const base = emptyState();
-  let left = base;
-  let right = base;
-  try { left = migrateState(a ?? base); } catch {}
-  try { right = migrateState(b ?? base); } catch {}
-  return {
+  const left = migrateState(a ?? base);
+  const right = migrateState(b ?? base);
+  const merged = {
     schema: SCHEMA_VERSION,
     sessions: mergeRecords(left.sessions, right.sessions),
     tests: mergeRecords(left.tests, right.tests),
     program: compareRecords(left.program, right.program) >= 0 ? left.program : right.program,
     settings: compareRecords(left.settings, right.settings) >= 0 ? left.settings : right.settings
   };
+  const validation = validateState(merged);
+  if (!validation.ok) throw Object.assign(new Error(validation.code), { code: validation.code });
+  return merged;
 }
 
 export function stateStats(state) {

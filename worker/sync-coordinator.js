@@ -15,6 +15,7 @@ const CODE_RE = /^[A-Z2-7]{32}$/;
 const DEVICE_RE = /^[A-Za-z0-9:_-]{1,128}$/;
 const DEVICE_SECRET_RE = /^[A-Za-z0-9_-]{43}$/;
 const PROOF_RE = /^[A-Za-z0-9_-]{43}$/;
+const STATE_ERROR_CODES = new Set(['invalid_state', 'unsupported_schema', 'too_large', 'too_many_records', 'too_many_tombstones']);
 const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 
 function response(body, status = 200) {
@@ -108,8 +109,12 @@ export class SyncCoordinator {
 
   fetch(request) {
     const run = this.queue.then(() => this.handle(request));
-    this.queue = run.catch(() => {});
-    return run;
+    const handled = run.catch((error) => {
+      if (!STATE_ERROR_CODES.has(error?.code)) throw error;
+      return response({ error: error.code }, error.code === 'too_large' ? 413 : 422);
+    });
+    this.queue = handled.catch(() => {});
+    return handled;
   }
 
   async meta() {
@@ -267,7 +272,11 @@ export class SyncCoordinator {
     if (protocol === 2 && (!DEVICE_RE.test(String(body.deviceId ?? '')) || !Number.isInteger(body.lastRevision) || body.lastRevision < 0 || body.lastRevision > meta.revision || !PROOF_RE.test(String(body.deviceProof ?? '')))) return response({ error: 'invalid_acknowledgement' }, 422);
     const validation = validateState(body.state);
     if (!validation.ok) return response({ error: validation.code }, validation.code === 'too_large' ? 413 : 422);
-    const incoming = reconcilePrunedState(withDevice(migrateState(body.state), body.deviceId || 'legacy-client'), meta.pruned);
+    const migrated = migrateState(body.state);
+    const stamped = withDevice(migrated, body.deviceId || 'legacy-client');
+    const stampedValidation = validateState(stamped);
+    if (!stampedValidation.ok) return response({ error: stampedValidation.code }, stampedValidation.code === 'too_large' ? 413 : 422);
+    const incoming = reconcilePrunedState(stamped, meta.pruned);
     const current = reconcilePrunedState(await this.load(request, meta), meta.pruned);
     let devices = meta.devices;
     if (protocol === 2) {

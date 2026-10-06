@@ -54,6 +54,8 @@ function parseJsonc(text) {
 }
 
 const local = process.argv.includes('--local');
+const placeholderNamespaceId = 'REPLACE_WITH_YOUR_KV_NAMESPACE_ID';
+const namespaceIdPattern = /^[a-f0-9]{32}$/;
 const [wranglerText, packageText] = await Promise.all([
   readFile(new URL('../wrangler.jsonc', import.meta.url), 'utf8'),
   readFile(new URL('../package.json', import.meta.url), 'utf8')
@@ -74,7 +76,8 @@ if (!syncNamespace) failures.push('missing SYNC KV binding');
 if (!coordinatorBinding) failures.push('missing SyncCoordinator Durable Object binding');
 if (!hasCoordinatorMigration) failures.push('missing forward Durable Object migration');
 if (!pkg.engines?.node || !/^>=22(?:\.0\.0)?$/.test(pkg.engines.node)) failures.push('Node >=22 engine is required');
-if (!local && syncNamespace?.id === 'REPLACE_WITH_YOUR_KV_NAMESPACE_ID') failures.push('placeholder KV namespace ID is not deployable');
+if (syncNamespace && syncNamespace.id !== placeholderNamespaceId && !namespaceIdPattern.test(syncNamespace.id ?? '')) failures.push('invalid SYNC KV namespace ID');
+if (!local && syncNamespace?.id === placeholderNamespaceId) failures.push('placeholder KV namespace ID is not deployable');
 if (failures.length) {
   console.error(`Configuration preflight failed${local ? ' (local mode)' : ''}:`);
   for (const failure of failures) console.error(`- ${failure}`);

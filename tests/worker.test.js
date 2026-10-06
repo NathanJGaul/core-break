@@ -55,6 +55,30 @@ function stateWith(id, template = 'A', writerId = 'device-a') {
   return state;
 }
 
+function nearLimitState(withIdentity) {
+  const state = emptyState();
+  state.schema = 1;
+  state.sessions = {};
+  for (let index = 0; index < 2000; index += 1) {
+    const session = {
+      id: `s${index}`,
+      updatedAt: 1,
+      date: '2026-10-06',
+      blockStart: '2026-10-01',
+      template: 'A',
+      block: 0,
+      form: 'clean',
+      intervals: Array.from({ length: 5 }, () => ({ ex: 'hollow', work: 20, done: true, pattern: 'x'.repeat(20) }))
+    };
+    if (withIdentity) {
+      session.writerId = 'legacy';
+      session.opId = 'o';
+    }
+    state.sessions[session.id] = session;
+  }
+  return state;
+}
+
 const deviceSecrets = new Map([
   ['device-a', 'A'.repeat(43)],
   ['device-b', 'B'.repeat(43)]
@@ -121,6 +145,33 @@ test('rejects malformed credentials, future protocols, and actual oversized bodi
   }, runtime);
   assert.equal(oversized.status, 413);
   assert.equal((await body(oversized)).error, 'too_large');
+});
+
+test('rejects a state that exceeds the limit after legacy writer stamping', async () => {
+  const runtime = env();
+  const result = await call('/api/sync', {
+    method: 'PUT', headers: { authorization: `Bearer ${code}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ state: nearLimitState(true) })
+  }, runtime);
+  assert.equal(result.status, 413);
+  assert.equal((await body(result)).error, 'too_large');
+});
+
+test('returns a stable size error for oversized state migrations', async () => {
+  const runtime = env();
+  const coordinator = runtime.SYNC_COORDINATOR.get(await keyFor(code));
+  await coordinator.storage.put('state', nearLimitState(false));
+  const loaded = await coordinator.fetch(new Request('https://coordinator.internal/api/sync', { headers: { 'x-sync-code': code } }));
+  assert.equal(loaded.status, 413);
+  assert.equal((await body(loaded)).error, 'too_large');
+
+  const imported = await coordinator.fetch(new Request('https://coordinator.internal/internal/import', {
+    method: 'PUT',
+    headers: { 'x-sync-code': code, 'content-type': 'application/json' },
+    body: JSON.stringify({ state: nearLimitState(false) })
+  }));
+  assert.equal(imported.status, 413);
+  assert.equal((await body(imported)).error, 'too_large');
 });
 
 test('accepts v1 and protocol 2 requests and serializes concurrent device updates', async () => {

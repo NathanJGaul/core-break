@@ -12,6 +12,26 @@ import {
   MAX_RECORDS
 } from '../src/lib/merge.js';
 
+function nearLimitState(prefix) {
+  const state = emptyState();
+  for (let index = 0; index < 1100; index += 1) {
+    const id = `${prefix}${index}`;
+    state.sessions[id] = {
+      id,
+      updatedAt: 1,
+      writerId: 'legacy',
+      opId: 'o',
+      date: '2026-10-06',
+      blockStart: '2026-10-01',
+      template: 'A',
+      block: 0,
+      form: 'clean',
+      intervals: Array.from({ length: 5 }, () => ({ ex: 'hollow', work: 20, done: true, pattern: 'x'.repeat(20) }))
+    };
+  }
+  return state;
+}
+
 test('migrates valid schema 1 state and preserves records without fabrication', () => {
   const migrated = migrateState({
     schema: 1,
@@ -73,4 +93,8 @@ test('equal timestamps use writer and operation identity regardless of argument 
   const right = { ...emptyState(), sessions: { s: { id: 's', date: '2026-10-06', blockStart: '2026-10-01', template: 'B', block: 0, form: 'clean', intervals: Array.from({ length: 5 }, () => ({ ex: 'hollow', work: 20, done: true })), updatedAt: 100, writerId: 'writer-a', opId: 'op-1' } } };
   assert.deepEqual(mergeStates(left, right).sessions.s, mergeStates(right, left).sessions.s);
   assert.equal(mergeStates(left, right).sessions.s.template, 'A');
+});
+
+test('rejects a merged state that exceeds the size bound', () => {
+  assert.throws(() => mergeStates(nearLimitState('a'), nearLimitState('b')), { code: 'too_large' });
 });
