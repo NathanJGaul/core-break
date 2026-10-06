@@ -1,8 +1,8 @@
 import { validateState, MAX_REQUEST_BYTES } from '../src/lib/merge.js';
 import { SyncCoordinator } from './sync-coordinator.js';
+import { VERSION } from './version.js';
 
 const CODE_RE = /^[A-Z2-7]{32}$/;
-export const VERSION = '2.0.0';
 const DEVICE_RE = /^[A-Za-z0-9:_-]{1,128}$/;
 const PROOF_RE = /^[A-Za-z0-9_-]{43}$/;
 const RATE_WINDOW_MS = 60_000;

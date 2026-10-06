@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { exit } from 'node:process';
-import { VERSION as apiVersion } from '../worker/index.js';
+import { VERSION as apiVersion } from '../worker/version.js';
 
 function stripJavaScriptComments(text) {
   let withoutComments = '';
