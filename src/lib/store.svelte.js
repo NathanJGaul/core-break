@@ -293,7 +293,7 @@ export function logSession(record) {
 export function deleteSession(id) {
   const s = app.data.sessions[id];
   if (!s) return;
-  app.data.sessions[id] = { ...s, deleted: true, deletedAt: Date.now(), deletedRevision: sync.revision + 1, writerId: sync.deviceId, opId: uid(), updatedAt: Date.now() };
+  app.data.sessions[id] = { ...s, deleted: true, deletedAt: Date.now(), deletedRevision: Math.max(sync.revision + 1, s.deletedRevision ?? 0), writerId: sync.deviceId, opId: uid(), updatedAt: Date.now() };
   commit();
 }
 
@@ -317,7 +317,7 @@ export function logTest(seconds, kind = 'extra') {
 export function deleteTest(id) {
   const t = app.data.tests[id];
   if (!t) return;
-  app.data.tests[id] = { ...t, deleted: true, deletedAt: Date.now(), deletedRevision: sync.revision + 1, writerId: sync.deviceId, opId: uid(), updatedAt: Date.now() };
+  app.data.tests[id] = { ...t, deleted: true, deletedAt: Date.now(), deletedRevision: Math.max(sync.revision + 1, t.deletedRevision ?? 0), writerId: sync.deviceId, opId: uid(), updatedAt: Date.now() };
   commit();
 }
 

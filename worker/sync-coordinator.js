@@ -91,7 +91,10 @@ function stampDeletionRevision(merged, current, incoming, revision) {
     const previous = current[kind]?.[id];
     const proposed = incoming[kind]?.[id];
     if (!previous?.deleted && proposed?.deleted) return [id, { ...record, deletedRevision: revision }];
-    return [id, { ...record, deletedRevision: record.deletedRevision ?? previous?.deletedRevision ?? revision }];
+    const previousRevision = Number.isInteger(previous?.deletedRevision) && previous.deletedRevision >= 0
+      ? previous.deletedRevision
+      : revision;
+    return [id, { ...record, deletedRevision: previousRevision }];
   }));
   return { ...merged, sessions: stampMap('sessions'), tests: stampMap('tests') };
 }

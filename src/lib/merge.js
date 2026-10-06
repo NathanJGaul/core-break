@@ -221,6 +221,11 @@ export function isValidState(state) {
 function compareRecords(a, b) {
   if (!a) return -1;
   if (!b) return 1;
+  if (a.deleted && b.deleted) {
+    const aRevision = Number.isInteger(a.deletedRevision) && a.deletedRevision >= 0 ? a.deletedRevision : -1;
+    const bRevision = Number.isInteger(b.deletedRevision) && b.deletedRevision >= 0 ? b.deletedRevision : -1;
+    if (aRevision !== bRevision) return aRevision > bRevision ? 1 : -1;
+  }
   const aTime = a.updatedAt ?? 0;
   const bTime = b.updatedAt ?? 0;
   if (aTime !== bTime) return aTime > bTime ? 1 : -1;

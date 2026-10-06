@@ -56,9 +56,10 @@ function parseJsonc(text) {
 const local = process.argv.includes('--local');
 const placeholderNamespaceId = 'REPLACE_WITH_YOUR_KV_NAMESPACE_ID';
 const namespaceIdPattern = /^[a-f0-9]{32}$/;
-const [wranglerText, packageText] = await Promise.all([
+const [wranglerText, packageText, serviceWorkerText] = await Promise.all([
   readFile(new URL('../wrangler.jsonc', import.meta.url), 'utf8'),
-  readFile(new URL('../package.json', import.meta.url), 'utf8')
+  readFile(new URL('../package.json', import.meta.url), 'utf8'),
+  readFile(new URL('../public/sw.js', import.meta.url), 'utf8')
 ]);
 const pkg = JSON.parse(packageText);
 const failures = [];
@@ -71,7 +72,9 @@ try {
 const syncNamespace = (Array.isArray(wrangler?.kv_namespaces) ? wrangler.kv_namespaces : []).find((namespace) => namespace?.binding === 'SYNC');
 const coordinatorBinding = (Array.isArray(wrangler?.durable_objects?.bindings) ? wrangler.durable_objects.bindings : []).find((binding) => binding?.name === 'SYNC_COORDINATOR' && binding?.class_name === 'SyncCoordinator');
 const hasCoordinatorMigration = (Array.isArray(wrangler?.migrations) ? wrangler.migrations : []).some((migration) => Array.isArray(migration?.new_sqlite_classes) && migration.new_sqlite_classes.includes('SyncCoordinator'));
+const cacheVersion = serviceWorkerText.match(/^\s*const CACHE\s*=\s*['"]core-break-v([^'"]+)['"]/m)?.[1];
 if (apiVersion !== pkg.version) failures.push(`API version ${apiVersion ?? 'missing'} does not match package version ${pkg.version}`);
+if (cacheVersion !== pkg.version) failures.push(`service-worker cache version ${cacheVersion ?? 'missing'} does not match package version ${pkg.version}`);
 if (!syncNamespace) failures.push('missing SYNC KV binding');
 if (!coordinatorBinding) failures.push('missing SyncCoordinator Durable Object binding');
 if (!hasCoordinatorMigration) failures.push('missing forward Durable Object migration');
