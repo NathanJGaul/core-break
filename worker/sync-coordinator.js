@@ -6,11 +6,14 @@ import {
   validateState,
   stateStats,
   canPruneTombstones,
+  verifyDeviceAcknowledgement,
   MAX_DEVICES
 } from '../src/lib/merge.js';
 
 const CODE_RE = /^[A-Z2-7]{32}$/;
 const DEVICE_RE = /^[A-Za-z0-9:_-]{1,128}$/;
+const DEVICE_SECRET_RE = /^[A-Za-z0-9_-]{43}$/;
+const PROOF_RE = /^[A-Za-z0-9_-]{43}$/;
 const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 
 function response(body, status = 200) {
@@ -22,6 +25,22 @@ function response(body, status = 200) {
 
 function codeFrom(request) {
   return request.headers.get('x-sync-code')?.toUpperCase() ?? null;
+}
+
+function normalizeDevices(devices) {
+  if (!devices || typeof devices !== 'object' || Array.isArray(devices)) return {};
+  return Object.fromEntries(Object.entries(devices)
+    .filter(([deviceId]) => DEVICE_RE.test(deviceId))
+    .map(([deviceId, entry]) => {
+      if (Number.isInteger(entry) && entry >= 0) return [deviceId, { acknowledgedRevision: entry, secret: null }];
+      const revision = Number.isInteger(entry?.acknowledgedRevision) && entry.acknowledgedRevision >= 0 ? entry.acknowledgedRevision : 0;
+      const secret = DEVICE_SECRET_RE.test(entry?.secret ?? '') ? entry.secret : null;
+      return [deviceId, { acknowledgedRevision: revision, secret }];
+    }));
+}
+
+function acknowledgementMap(devices) {
+  return Object.fromEntries(Object.entries(devices).map(([deviceId, entry]) => [deviceId, entry.acknowledgedRevision]));
 }
 
 function withDevice(state, deviceId) {
@@ -67,13 +86,15 @@ export class SyncCoordinator {
   }
 
   async meta() {
-    return (await this.storage.get('meta')) ?? {
-      revision: 0,
-      imported: false,
-      revoked: false,
-      devices: {},
-      replacement: null,
-      migrationError: null
+    const stored = await this.storage.get('meta');
+    const value = stored && typeof stored === 'object' && !Array.isArray(stored) ? stored : {};
+    return {
+      revision: Number.isInteger(value.revision) && value.revision >= 0 ? value.revision : 0,
+      imported: Boolean(value.imported),
+      revoked: Boolean(value.revoked),
+      devices: normalizeDevices(value.devices),
+      replacement: value.replacement ?? null,
+      migrationError: value.migrationError ?? null
     };
   }
 
@@ -125,14 +146,18 @@ export class SyncCoordinator {
 
     if (url.pathname === '/internal/export' && request.method === 'GET') {
       const state = await this.load(request, meta);
-      return response({ state, revision: meta.revision, replacement: meta.replacement });
+      return response({ state, revision: meta.revision, replacement: meta.replacement, devices: meta.devices });
     }
     if (url.pathname === '/internal/import' && request.method === 'PUT') {
       const body = await request.json().catch(() => null);
       if (!body?.state) return response({ error: 'invalid_state' }, 422);
       const state = migrateState(body.state);
-      const result = await this.save(state, { ...meta, imported: true, revision: Math.max(meta.revision, Number(body.revision) || 0) });
-      return result ?? response({ state, revision: Math.max(meta.revision, Number(body.revision) || 0) });
+      const devices = normalizeDevices(body.devices);
+      if (Object.keys(devices).length > MAX_DEVICES) return response({ error: 'too_many_devices' }, 422);
+      const revision = Math.max(meta.revision, Number.isInteger(body.revision) && body.revision >= 0 ? body.revision : 0);
+      const nextMeta = { ...meta, imported: true, revision, devices };
+      const result = await this.save(state, nextMeta);
+      return result ?? response({ state, revision, devices });
     }
     if (url.pathname === '/internal/revoke' && request.method === 'POST') {
       const body = await request.json().catch(() => null);
@@ -149,12 +174,17 @@ export class SyncCoordinator {
     }
     if (url.pathname === '/internal/prune' && request.method === 'POST') {
       const body = await request.json().catch(() => null);
-      const deviceId = typeof body?.deviceId === 'string' ? body.deviceId.slice(0, 128) : '';
-      const acknowledgedRevision = Number(body?.acknowledgedRevision);
-      if (!deviceId || !Number.isInteger(acknowledgedRevision) || acknowledgedRevision < 0) return response({ error: 'invalid_acknowledgement' }, 422);
+      const deviceId = typeof body?.deviceId === 'string' ? body.deviceId : '';
+      const acknowledgedRevision = body?.acknowledgedRevision;
+      const proof = typeof body?.deviceProof === 'string' ? body.deviceProof : '';
+      const entry = meta.devices[deviceId];
+      if (!DEVICE_RE.test(deviceId) || !Number.isInteger(acknowledgedRevision) || acknowledgedRevision < 0 || acknowledgedRevision > meta.revision || !PROOF_RE.test(proof) || !entry?.secret || !await verifyDeviceAcknowledgement(entry.secret, deviceId, acknowledgedRevision, proof)) {
+        return response({ error: 'invalid_acknowledgement' }, 422);
+      }
       const state = await this.load(request, meta);
-      const devices = { ...meta.devices, [deviceId]: Math.max(Number(meta.devices[deviceId]) || 0, acknowledgedRevision) };
-      if (!canPruneTombstones(state, devices)) return response({ error: 'tombstones_retained', revision: meta.revision }, 409);
+      if (Object.keys(meta.devices).length > MAX_DEVICES) return response({ error: 'too_many_devices' }, 422);
+      const devices = { ...meta.devices, [deviceId]: { ...entry, acknowledgedRevision: Math.max(entry.acknowledgedRevision, acknowledgedRevision) } };
+      if (!canPruneTombstones(state, acknowledgementMap(devices))) return response({ error: 'tombstones_retained', revision: meta.revision }, 409);
       const pruned = {
         ...state,
         sessions: Object.fromEntries(Object.entries(state.sessions).filter(([, record]) => !record.deleted)),
@@ -176,17 +206,29 @@ export class SyncCoordinator {
     if (!body || !body.state) return response({ error: 'invalid_state' }, 422);
     const protocol = body.protocol ?? 1;
     if (protocol > 2 || protocol < 1) return response({ error: 'unsupported_protocol' }, 426);
-    if (protocol === 2 && (!DEVICE_RE.test(String(body.deviceId ?? '')) || !Number.isInteger(body.lastRevision) || body.lastRevision < 0)) return response({ error: 'invalid_state' }, 422);
+    if (protocol === 2 && (!DEVICE_RE.test(String(body.deviceId ?? '')) || !Number.isInteger(body.lastRevision) || body.lastRevision < 0 || body.lastRevision > meta.revision || !PROOF_RE.test(String(body.deviceProof ?? '')))) return response({ error: 'invalid_acknowledgement' }, 422);
     const validation = validateState(body.state);
     if (!validation.ok) return response({ error: validation.code }, validation.code === 'too_large' ? 413 : 422);
     const incoming = withDevice(migrateState(body.state), body.deviceId || 'legacy-client');
     const current = await this.load(request, meta);
+    let devices = meta.devices;
+    if (protocol === 2) {
+      const deviceId = body.deviceId;
+      const existing = devices[deviceId];
+      const secret = existing?.secret ?? body.deviceSecret;
+      if (!DEVICE_SECRET_RE.test(secret ?? '') || !await verifyDeviceAcknowledgement(secret, deviceId, body.lastRevision, body.deviceProof)) return response({ error: 'invalid_acknowledgement' }, 422);
+      devices = {
+        ...devices,
+        [deviceId]: {
+          secret,
+          acknowledgedRevision: Math.max(existing?.acknowledgedRevision ?? 0, body.lastRevision)
+        }
+      };
+    }
     const mergedCandidate = mergeStates(current, incoming);
     const changed = stableStringify(mergedCandidate) !== stableStringify(current);
     const revision = changed ? meta.revision + 1 : meta.revision;
     const merged = stampDeletionRevision(mergedCandidate, current, incoming, revision);
-    const deviceId = String(body.deviceId || 'legacy-client').slice(0, 128);
-    const devices = { ...meta.devices, [deviceId]: revision };
     const deviceIds = Object.keys(devices);
     if (deviceIds.length > MAX_DEVICES) return response({ error: 'too_many_devices' }, 422);
     const nextMeta = { ...meta, imported: true, revision, devices };

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import worker, { keyFor } from '../worker/index.js';
 import { SyncCoordinator } from '../worker/sync-coordinator.js';
-import { emptyState } from '../src/lib/merge.js';
+import { emptyState, deviceAcknowledgementProof } from '../src/lib/merge.js';
 
 class MemoryStorage {
   constructor() { this.values = new Map(); }
@@ -54,6 +54,23 @@ function stateWith(id, template = 'A', writerId = 'device-a') {
   return state;
 }
 
+const deviceSecrets = new Map([
+  ['device-a', 'A'.repeat(43)],
+  ['device-b', 'B'.repeat(43)]
+]);
+
+async function protocol2(deviceId, lastRevision, state, includeSecret = true) {
+  const deviceSecret = deviceSecrets.get(deviceId) ?? 'C'.repeat(43);
+  return {
+    protocol: 2,
+    deviceId,
+    lastRevision,
+    deviceProof: await deviceAcknowledgementProof(deviceSecret, deviceId, lastRevision),
+    ...(includeSecret ? { deviceSecret } : {}),
+    state
+  };
+}
+
 async function call(path, options = {}, runtime = env()) {
   return worker.fetch(new Request(`https://example.test${path}`, options), runtime);
 }
@@ -97,7 +114,7 @@ test('accepts v1 and protocol 2 requests and serializes concurrent device update
   }, runtime);
   const second = call('/api/sync', {
     method: 'PUT', headers: { authorization: `Bearer ${code}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ protocol: 2, deviceId: 'device-b', lastRevision: 0, state: stateWith('two', 'B', 'device-b') })
+    body: JSON.stringify(await protocol2('device-b', 0, stateWith('two', 'B', 'device-b')))
   }, runtime);
   const responses = await Promise.all([first, second]);
   assert.deepEqual(responses.map((response) => response.status), [200, 200]);
@@ -111,7 +128,7 @@ test('rotation copies state, revokes the old code, and deletion leaves a revocat
   const runtime = env();
   const put = await call('/api/sync', {
     method: 'PUT', headers: { authorization: `Bearer ${code}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ protocol: 2, deviceId: 'device-a', lastRevision: 0, state: stateWith('keep') })
+    body: JSON.stringify(await protocol2('device-a', 0, stateWith('keep')))
   }, runtime);
   assert.equal(put.status, 200);
   const coordinator = runtime.SYNC_COORDINATOR.get(await keyFor(code));
@@ -123,6 +140,11 @@ test('rotation copies state, revokes the old code, and deletion leaves a revocat
   assert.equal(rotated.status, 200);
   assert.match(replacement.code, /^[A-Z2-7]{32}$/);
   assert.equal((await call('/api/sync', { headers: { authorization: `Bearer ${code}` } }, runtime)).status, 410);
+  const replacementPut = await call('/api/sync', {
+    method: 'PUT', headers: { authorization: `Bearer ${replacement.code}`, 'content-type': 'application/json' },
+    body: JSON.stringify(await protocol2('device-a', 1, stateWith('keep'), false))
+  }, runtime);
+  assert.equal(replacementPut.status, 200);
   assert.equal((await call('/api/sync', { headers: { authorization: `Bearer ${replacement.code}` } }, runtime)).status, 200);
   const deleted = await call('/api/sync', { method: 'DELETE', headers: { authorization: `Bearer ${replacement.code}` } }, runtime);
   assert.equal(deleted.status, 200);
@@ -154,7 +176,7 @@ test('retains tombstones until every known device acknowledges the deletion revi
   const runtime = env();
   const initial = await call('/api/sync', {
     method: 'PUT', headers: { authorization: `Bearer ${code}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ protocol: 2, deviceId: 'device-a', lastRevision: 0, state: stateWith('gone', 'A', 'device-a') })
+    body: JSON.stringify(await protocol2('device-a', 0, stateWith('gone', 'A', 'device-a')))
   }, runtime);
   assert.equal(initial.status, 200);
   const state = stateWith('gone', 'A', 'device-b');
@@ -164,17 +186,27 @@ test('retains tombstones until every known device acknowledges the deletion revi
   state.sessions.gone.updatedAt = Date.now() + 1;
   const put = await call('/api/sync', {
     method: 'PUT', headers: { authorization: `Bearer ${code}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ protocol: 2, deviceId: 'device-b', lastRevision: 1, state })
+    body: JSON.stringify(await protocol2('device-b', 1, state))
   }, runtime);
   assert.equal(put.status, 200);
+  const forged = await call('/api/sync/prune', {
+    method: 'POST', headers: { authorization: `Bearer ${code}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ deviceId: 'device-b', acknowledgedRevision: 2, deviceProof: await deviceAcknowledgementProof(deviceSecrets.get('device-a'), 'device-b', 2) })
+  }, runtime);
+  assert.equal(forged.status, 422);
   const blocked = await call('/api/sync/prune', {
     method: 'POST', headers: { authorization: `Bearer ${code}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ deviceId: 'device-a', acknowledgedRevision: 1 })
+    body: JSON.stringify({ deviceId: 'device-a', acknowledgedRevision: 1, deviceProof: await deviceAcknowledgementProof(deviceSecrets.get('device-a'), 'device-a', 1) })
   }, runtime);
   assert.equal(blocked.status, 409);
+  const acknowledgeDeviceB = await call('/api/sync', {
+    method: 'PUT', headers: { authorization: `Bearer ${code}`, 'content-type': 'application/json' },
+    body: JSON.stringify(await protocol2('device-b', 2, state))
+  }, runtime);
+  assert.equal(acknowledgeDeviceB.status, 200);
   const pruned = await call('/api/sync/prune', {
     method: 'POST', headers: { authorization: `Bearer ${code}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ deviceId: 'device-a', acknowledgedRevision: 2 })
+    body: JSON.stringify({ deviceId: 'device-a', acknowledgedRevision: 2, deviceProof: await deviceAcknowledgementProof(deviceSecrets.get('device-a'), 'device-a', 2) })
   }, runtime);
   assert.equal(pruned.status, 200);
   const fetched = await call('/api/sync', { headers: { authorization: `Bearer ${code}` } }, runtime);

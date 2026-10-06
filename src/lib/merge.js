@@ -72,7 +72,7 @@ function validSession(record, id) {
   if (!allowed(record, new Set(['id', 'updatedAt', 'writerId', 'opId', 'deleted', 'deletedAt', 'deletedRevision', 'date', 'startedAt', 'endedAt', 'blockStart', 'block', 'template', 'intervals', 'form']))) return false;
   if (!validMeta(record) || record.id !== id || !validId(id)) return false;
   if (typeof record.deleted !== 'undefined' && typeof record.deleted !== 'boolean') return false;
-  if (record.deleted && (!finiteTimestamp(record.deletedAt) || (record.deletedRevision !== undefined && !Number.isInteger(record.deletedRevision)))) return false;
+  if (record.deleted && (!finiteTimestamp(record.deletedAt) || (record.deletedRevision !== undefined && (!Number.isInteger(record.deletedRevision) || record.deletedRevision < 0)))) return false;
   if (!validDate(record.date) || !validDate(record.blockStart)) return false;
   if (record.startedAt !== undefined && !finiteTimestamp(record.startedAt)) return false;
   if (record.endedAt !== undefined && !finiteTimestamp(record.endedAt)) return false;
@@ -85,7 +85,7 @@ function validTest(record, id) {
   if (!allowed(record, new Set(['id', 'updatedAt', 'writerId', 'opId', 'deleted', 'deletedAt', 'deletedRevision', 'at', 'date', 'seconds', 'kind', 'blockStart']))) return false;
   if (!validMeta(record) || record.id !== id || !validId(id)) return false;
   if (typeof record.deleted !== 'undefined' && typeof record.deleted !== 'boolean') return false;
-  if (record.deleted && (!finiteTimestamp(record.deletedAt) || (record.deletedRevision !== undefined && !Number.isInteger(record.deletedRevision)))) return false;
+  if (record.deleted && (!finiteTimestamp(record.deletedAt) || (record.deletedRevision !== undefined && (!Number.isInteger(record.deletedRevision) || record.deletedRevision < 0)))) return false;
   return finiteTimestamp(record.at) && validDate(record.date) &&
     Number.isFinite(record.seconds) && record.seconds >= 0 && record.seconds <= 3600 &&
     TEST_KINDS.has(record.kind) && validDate(record.blockStart);
@@ -112,6 +112,50 @@ export function stableStringify(value) {
   if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
   if (isObject(value)) return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(',')}}`;
   return JSON.stringify(value);
+}
+
+function encodeBase64Url(bytes) {
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function decodeBase64Url(value) {
+  if (typeof value !== 'string' || !/^[A-Za-z0-9_-]+$/.test(value)) return null;
+  try {
+    const binary = atob(value.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - value.length % 4) % 4));
+    return Uint8Array.from(binary, (char) => char.charCodeAt(0));
+  } catch {
+    return null;
+  }
+}
+
+export function createDeviceSecret() {
+  return encodeBase64Url(crypto.getRandomValues(new Uint8Array(32)));
+}
+
+function acknowledgementMessage(deviceId, revision) {
+  return `core-break:ack:v1:${deviceId}:${revision}`;
+}
+
+export async function deviceAcknowledgementProof(secret, deviceId, revision) {
+  const keyBytes = decodeBase64Url(secret);
+  if (!keyBytes || !Number.isInteger(revision) || revision < 0) throw new Error('invalid_acknowledgement');
+  const key = await crypto.subtle.importKey('raw', keyBytes, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const signature = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(acknowledgementMessage(deviceId, revision)));
+  return encodeBase64Url(new Uint8Array(signature));
+}
+
+export async function verifyDeviceAcknowledgement(secret, deviceId, revision, proof) {
+  const keyBytes = decodeBase64Url(secret);
+  const signature = decodeBase64Url(proof);
+  if (!keyBytes || !signature || signature.length !== 32 || !Number.isInteger(revision) || revision < 0) return false;
+  try {
+    const key = await crypto.subtle.importKey('raw', keyBytes, { name: 'HMAC', hash: 'SHA-256' }, false, ['verify']);
+    return await crypto.subtle.verify('HMAC', key, signature, new TextEncoder().encode(acknowledgementMessage(deviceId, revision)));
+  } catch {
+    return false;
+  }
 }
 
 function legacyIdentity(record) {
@@ -230,5 +274,8 @@ export function canPruneTombstones(state, acknowledgements = {}) {
   const devices = Object.keys(acknowledgements);
   if (!devices.length) return false;
   const minimumRevision = Math.min(...devices.map((device) => Number(acknowledgements[device]) || 0));
-  return Object.values(state?.sessions ?? {}).concat(Object.values(state?.tests ?? {})).every((record) => !record.deleted || Number(record.deletedRevision ?? 0) <= minimumRevision);
+  return Object.values(state?.sessions ?? {}).concat(Object.values(state?.tests ?? {})).every((record) => {
+    if (!record.deleted) return true;
+    return Number.isInteger(record.deletedRevision) && record.deletedRevision >= 0 && record.deletedRevision <= minimumRevision;
+  });
 }

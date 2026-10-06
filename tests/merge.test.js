@@ -6,6 +6,7 @@ import {
   validateState,
   mergeStates,
   isValidState,
+  canPruneTombstones,
   MAX_STATE_BYTES,
   MAX_RECORDS
 } from '../src/lib/merge.js';
@@ -31,6 +32,15 @@ test('rejects malformed nested records, unknown schema, and bounds', () => {
   assert.equal(validateState({ ...emptyState(), sessions: tooMany }).code, 'too_many_records');
   assert.equal(validateState({ ...emptyState(), sessions: { s: { id: 's', date: '2026-10-06', blockStart: '2026-10-01', template: 0, block: 0, form: 'full', intervals: [], updatedAt: 1, note: 'x'.repeat(MAX_STATE_BYTES) } } }).code, 'too_large');
   assert.equal(isValidState({ ...emptyState(), sessions: { broken: null } }), false);
+});
+
+test('tombstone pruning never treats missing or negative revisions as acknowledged', () => {
+  const state = emptyState();
+  state.sessions.deleted = { id: 'deleted', updatedAt: 1, writerId: 'writer-a', opId: 'delete-1', deleted: true, deletedAt: 1, date: '2026-10-06', blockStart: '2026-10-01', template: 'A', block: 0, form: 'clean', intervals: Array.from({ length: 5 }, () => ({ ex: 'hollow', work: 20, done: true })) };
+  assert.equal(canPruneTombstones(state, { 'device-a': 10 }), false);
+  state.sessions.deleted.deletedRevision = -1;
+  assert.equal(validateState(state).ok, false);
+  assert.equal(canPruneTombstones(state, { 'device-a': 10 }), false);
 });
 
 test('equal timestamps use writer and operation identity regardless of argument order', () => {

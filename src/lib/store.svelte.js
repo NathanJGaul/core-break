@@ -1,4 +1,4 @@
-import { emptyState, mergeStates, migrateState, validateState } from './merge.js';
+import { emptyState, mergeStates, migrateState, validateState, createDeviceSecret, deviceAcknowledgementProof } from './merge.js';
 import { readItem as readStorageItem, writeItem as writeStorageItem } from './storage.js';
 import { localDate } from './dates.js';
 
@@ -6,7 +6,9 @@ const DATA_KEY = 'core-break:data';
 const CODE_KEY = 'core-break:sync-code';
 const SYNC_AT_KEY = 'core-break:last-synced';
 const DEVICE_KEY = 'core-break:device-id';
+const DEVICE_SECRET_KEY = 'core-break:device-secret';
 const REVISION_KEY = 'core-break:sync-revision';
+const DEVICE_SECRET_RE = /^[A-Za-z0-9_-]{43}$/;
 
 function readLocal() {
   try {
@@ -38,11 +40,20 @@ function deviceIdentifier() {
   return value;
 }
 
+function deviceSecret() {
+  const saved = readItem(DEVICE_SECRET_KEY);
+  if (DEVICE_SECRET_RE.test(saved ?? '')) return saved;
+  const value = createDeviceSecret();
+  writeItem(DEVICE_SECRET_KEY, value);
+  return value;
+}
+
 export const app = $state({ data: readLocal() });
 
 export const sync = $state({
   code: readItem(CODE_KEY),
   deviceId: deviceIdentifier(),
+  deviceSecret: deviceSecret(),
   revision: Number(readItem(REVISION_KEY)) || 0,
   status: 'idle', // idle | syncing | ok | offline | error | revoked
   message: '',
@@ -106,10 +117,11 @@ export async function syncNow() {
   sync.errorCode = '';
   inFlight = (async () => {
     try {
+      const deviceProof = await deviceAcknowledgementProof(sync.deviceSecret, sync.deviceId, sync.revision);
       const res = await fetch('/api/sync', {
         method: 'PUT',
         headers: { 'content-type': 'application/json', authorization: `Bearer ${sync.code}` },
-        body: JSON.stringify({ protocol: 2, deviceId: sync.deviceId, lastRevision: sync.revision, state: $state.snapshot(app.data) })
+        body: JSON.stringify({ protocol: 2, deviceId: sync.deviceId, deviceSecret: sync.deviceSecret, deviceProof, lastRevision: sync.revision, state: $state.snapshot(app.data) })
       });
       const body = await res.json().catch(() => null);
       if (!res.ok || !body?.state) {

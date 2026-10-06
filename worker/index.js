@@ -4,6 +4,7 @@ import { SyncCoordinator } from './sync-coordinator.js';
 const CODE_RE = /^[A-Z2-7]{32}$/;
 const VERSION = '2.0.0';
 const DEVICE_RE = /^[A-Za-z0-9:_-]{1,128}$/;
+const PROOF_RE = /^[A-Za-z0-9_-]{43}$/;
 const RATE_WINDOW_MS = 60_000;
 const RATE_LIMIT = 60;
 const rateBuckets = new Map();
@@ -124,7 +125,7 @@ async function handleSync(request, env, id) {
   const body = parsed.body;
   const protocol = body?.protocol ?? 1;
   if (!Number.isInteger(protocol) || protocol < 1 || protocol > 2) return json({ error: 'unsupported_protocol' }, 426, id, env);
-  if (protocol === 2 && (!DEVICE_RE.test(String(body?.deviceId ?? '')) || !Number.isInteger(body?.lastRevision) || body.lastRevision < 0)) return json({ error: 'invalid_state' }, 422, id, env);
+  if (protocol === 2 && (!DEVICE_RE.test(String(body?.deviceId ?? '')) || !Number.isInteger(body?.lastRevision) || body.lastRevision < 0 || !PROOF_RE.test(String(body?.deviceProof ?? '')))) return json({ error: 'invalid_acknowledgement' }, 422, id, env);
   if (!body?.state) return json({ error: 'invalid_state' }, 422, id, env);
   const validation = validateState(body.state);
   if (!validation.ok) return json({ error: validation.code }, validation.code === 'too_large' ? 413 : 422, id, env);
@@ -153,7 +154,7 @@ async function handleRotate(request, env, id) {
   const imported = await newCoordinator.fetch(new Request('https://coordinator.internal/internal/import', {
     method: 'PUT',
     headers: { 'content-type': 'application/json', 'x-sync-code': replacement },
-    body: JSON.stringify({ state: exported.state, revision: exported.revision })
+    body: JSON.stringify({ state: exported.state, revision: exported.revision, devices: exported.devices })
   }));
   if (!imported.ok) return json({ error: 'rotation_failed' }, 503, id, env);
   const revoked = await oldCoordinator.fetch(new Request('https://coordinator.internal/internal/revoke', {
@@ -171,7 +172,7 @@ async function handlePrune(request, env, id) {
   if (request.method !== 'POST') return json({ error: 'method_not_allowed' }, 405, id, env);
   const parsed = await parseBody(request);
   if (parsed.error) return json({ error: parsed.error }, parsed.status, id, env);
-  if (!parsed.body?.deviceId || !Number.isInteger(Number(parsed.body.acknowledgedRevision))) return json({ error: 'invalid_acknowledgement' }, 422, id, env);
+  if (!DEVICE_RE.test(String(parsed.body?.deviceId ?? '')) || !Number.isInteger(parsed.body.acknowledgedRevision) || parsed.body.acknowledgedRevision < 0 || !PROOF_RE.test(String(parsed.body?.deviceProof ?? ''))) return json({ error: 'invalid_acknowledgement' }, 422, id, env);
   return forward(env, code, '/internal/prune', 'POST', parsed.body, id);
 }
 
