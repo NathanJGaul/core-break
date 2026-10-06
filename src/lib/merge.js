@@ -45,7 +45,7 @@ function validDate(value) {
 }
 
 function validId(value, re = ID_RE) {
-  return typeof value === 'string' && re.test(value);
+  return typeof value === 'string' && value !== '__proto__' && re.test(value);
 }
 
 function allowed(value, keys) {

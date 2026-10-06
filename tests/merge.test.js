@@ -55,6 +55,38 @@ test('rejects malformed nested records, unknown schema, and bounds', () => {
   assert.equal(isValidState({ ...emptyState(), sessions: { broken: null } }), false);
 });
 
+test('rejects prototype-polluting record IDs before map operations', () => {
+  const session = {
+    id: '__proto__',
+    updatedAt: 1,
+    writerId: 'writer-a',
+    opId: 'session-1',
+    date: '2026-10-06',
+    blockStart: '2026-10-01',
+    template: 'A',
+    block: 0,
+    form: 'clean',
+    intervals: Array.from({ length: 5 }, () => ({ ex: 'hollow', work: 20, done: true }))
+  };
+  const testRecord = {
+    id: '__proto__',
+    updatedAt: 1,
+    writerId: 'writer-a',
+    opId: 'test-1',
+    at: 1,
+    date: '2026-10-06',
+    seconds: 20,
+    kind: 'extra',
+    blockStart: '2026-10-01'
+  };
+  const sessions = Object.create(null);
+  const tests = Object.create(null);
+  Object.defineProperty(sessions, '__proto__', { value: session, enumerable: true });
+  Object.defineProperty(tests, '__proto__', { value: testRecord, enumerable: true });
+  assert.equal(validateState({ ...emptyState(), sessions }).code, 'invalid_state');
+  assert.equal(validateState({ ...emptyState(), tests }).code, 'invalid_state');
+});
+
 test('tombstone pruning never treats missing or negative revisions as acknowledged', () => {
   const state = emptyState();
   state.sessions.deleted = { id: 'deleted', updatedAt: 1, writerId: 'writer-a', opId: 'delete-1', deleted: true, deletedAt: 1, date: '2026-10-06', blockStart: '2026-10-01', template: 'A', block: 0, form: 'clean', intervals: Array.from({ length: 5 }, () => ({ ex: 'hollow', work: 20, done: true })) };
