@@ -49,6 +49,14 @@ npm run dev       # UI only with hot reload (sync will show "Not synced")
 npm run preview   # Full app with the Worker and a local KV, at http://localhost:8787
 ```
 
+To run the same validation used by CI:
+
+```sh
+npm test       # core behavior tests
+npm run check  # program and data invariants
+npm run build  # production bundle
+```
+
 ## The program
 
 Each session is five one-minute intervals after a 10-second get-ready countdown. Sessions rotate through three templates so every movement pattern gets covered across the day:

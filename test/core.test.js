@@ -82,4 +82,3 @@ test('blockStatus recommends advancing a completed, consistent block', () => {
   assert.equal(status.recommendation, 'advance');
   assert.match(status.reasons.join(' '), /improved from 30\.0s to 40\.0s/);
 });
-
