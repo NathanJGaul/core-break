@@ -232,6 +232,38 @@ test('pre-flag coordinator metadata remains an unacknowledged participant', asyn
   assert.equal((await body(prune)).error, 'tombstones_retained');
 });
 
+test('load-time legacy migration remains protected during a same-request protocol update', async () => {
+  const runtime = env();
+  const coordinator = runtime.SYNC_COORDINATOR.get(await keyFor(code));
+  const legacy = stateWith('gone', 'A', 'old-device');
+  legacy.schema = 1;
+  await coordinator.storage.put('state', legacy);
+  await coordinator.storage.put('meta', {
+    revision: 0,
+    imported: true,
+    revoked: false,
+    devices: { 'device-a': { acknowledgedRevision: 0, secret: deviceSecrets.get('device-a') } },
+    legacyParticipant: false
+  });
+
+  const deleted = stateWith('gone', 'A', 'device-a');
+  deleted.sessions.gone.deleted = true;
+  deleted.sessions.gone.deletedAt = Date.now();
+  deleted.sessions.gone.updatedAt = Date.now() + 1;
+  const updated = await call('/api/sync', {
+    method: 'PUT', headers: { authorization: `Bearer ${code}`, 'content-type': 'application/json' },
+    body: JSON.stringify(await protocol2('device-a', 0, deleted, false))
+  }, runtime);
+  assert.equal(updated.status, 200);
+
+  const prune = await call('/api/sync/prune', {
+    method: 'POST', headers: { authorization: `Bearer ${code}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ deviceId: 'device-a', acknowledgedRevision: 1, deviceProof: await deviceAcknowledgementProof(deviceSecrets.get('device-a'), 'device-a', 1) })
+  }, runtime);
+  assert.equal(prune.status, 409);
+  assert.equal((await body(prune)).error, 'tombstones_retained');
+});
+
 test('retains tombstones until every known device acknowledges the deletion revision', async () => {
   const runtime = env();
   const initial = await call('/api/sync', {

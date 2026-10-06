@@ -119,7 +119,8 @@ export class SyncCoordinator {
     if (stored) {
       const migrated = migrateState(stored);
       if (!meta.legacyParticipant && (stored.schema === 1 || hasLegacyWriter(migrated))) {
-        await this.storage.put('meta', { ...meta, legacyParticipant: true });
+        meta.legacyParticipant = true;
+        await this.storage.put('meta', { ...meta });
       }
       return migrated;
     }
@@ -131,13 +132,18 @@ export class SyncCoordinator {
           try {
             const migrated = migrateState(legacy);
             await this.storage.put('state', migrated);
-            await this.storage.put('meta', { ...meta, imported: true, legacyParticipant: true });
+            meta.imported = true;
+            meta.legacyParticipant = true;
+            await this.storage.put('meta', { ...meta });
             return migrated;
           } catch (error) {
-            await this.storage.put('meta', { ...meta, imported: true, migrationError: error.code ?? 'invalid_state' });
+            meta.imported = true;
+            meta.migrationError = error.code ?? 'invalid_state';
+            await this.storage.put('meta', { ...meta });
           }
         } else {
-          await this.storage.put('meta', { ...meta, imported: true });
+          meta.imported = true;
+          await this.storage.put('meta', { ...meta });
         }
       }
     }
