@@ -169,7 +169,12 @@ export async function syncNow() {
 
 export function setSyncCode(code) {
   const normalized = code ? normalizeCode(code) : null;
+  const changed = sync.code !== normalized;
   sync.code = normalized;
+  if (changed) {
+    sync.revision = 0;
+    if (!writeItem(REVISION_KEY, '0')) sync.storageError = true;
+  }
   if (!writeItem(CODE_KEY, normalized)) sync.storageError = true;
   if (normalized) syncNow();
   else {

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { emptyState, verifyDeviceAcknowledgement } from '../src/lib/merge.js';
+import { emptyState, validateState, verifyDeviceAcknowledgement } from '../src/lib/merge.js';
 
 class FakeStorage {
   constructor() {
@@ -31,7 +31,21 @@ globalThis.$state = (value) => value;
 globalThis.$state.snapshot = (value) => structuredClone(value);
 
 const store = await import(`../src/lib/store.svelte.js?behavior=${Date.now()}`);
-const { app, sync, normalizeCode, setSyncCode, syncNow, rotateSyncCode, deleteRemoteData, updateSettings } = store;
+const {
+  app,
+  sync,
+  normalizeCode,
+  setSyncCode,
+  syncNow,
+  rotateSyncCode,
+  deleteRemoteData,
+  logSession,
+  logTest,
+  decideBlock,
+  deleteSession,
+  deleteTest,
+  updateSettings
+} = store;
 const code = 'A'.repeat(32);
 const replacement = 'B'.repeat(32);
 const deviceSecret = 'A'.repeat(43);
@@ -116,7 +130,74 @@ test('rotation and remote deletion update the persisted sync lifecycle', async (
   assert.equal(calls.some(({ method }) => method === 'DELETE'), true);
 });
 
-test('settings actions persist changes and code normalization matches onboarding input', () => {
+test('public record actions persist validator-compatible sessions, tests, decisions, and tombstones', () => {
+  reset();
+  app.data.program = {
+    ...emptyState().program,
+    started: true,
+    blockStart: '2026-10-01'
+  };
+  logSession({
+    startedAt: 1,
+    endedAt: 2,
+    date: '2026-10-06',
+    block: 0,
+    blockStart: '2026-10-01',
+    template: 'A',
+    intervals: Array.from({ length: 5 }, (_, index) => ({
+      ex: 'hollow',
+      side: null,
+      pattern: 'antiExtension',
+      work: 20,
+      done: index < 4
+    })),
+    form: 'clean'
+  });
+  const sessionId = Object.keys(app.data.sessions)[0];
+  logTest(42, 'block-end');
+  const testId = Object.keys(app.data.tests)[0];
+  decideBlock('repeat');
+  deleteSession(sessionId);
+  deleteTest(testId);
+
+  assert.equal(validateState(app.data).ok, true);
+  assert.equal(app.data.sessions[sessionId].deleted, true);
+  assert.equal(app.data.tests[testId].deleted, true);
+  assert.equal(app.data.program.history.at(-1).decision, 'repeat');
+  assert.equal(validateState(JSON.parse(storage.getItem('core-break:data'))).ok, true);
+});
+
+test('settings and onboarding sync lifecycles expose revoked and storage failures and reset revisions on join', async () => {
+  reset();
+  sync.code = code;
+  globalThis.fetch = async () => new Response(JSON.stringify({ error: 'revoked_code' }), { status: 410 });
+  setSyncCode(code);
+  await syncNow();
+  assert.equal(sync.status, 'revoked');
+  assert.match(sync.message, /revoked/);
+
+  reset();
+  storage.fail = true;
+  globalThis.fetch = async () => new Response(JSON.stringify({ state: emptyState(), revision: 1 }), { status: 200 });
+  setSyncCode(code);
+  await syncNow();
+  assert.equal(sync.storageError, true);
+  assert.equal(sync.errorCode, 'local_storage_unavailable');
+  assert.match(sync.message, /storage/i);
+
+  reset();
+  sync.code = code;
+  sync.revision = 9;
+  let request;
+  globalThis.fetch = async (url, options) => {
+    if (url === '/api/sync') request = JSON.parse(options.body);
+    return new Response(JSON.stringify({ state: emptyState(), revision: 1 }), { status: 200 });
+  };
+  setSyncCode(replacement);
+  await syncNow();
+  assert.equal(request.lastRevision, 0);
+  assert.equal(sync.code, replacement);
+
   reset();
   updateSettings({ sound: false });
   assert.equal(app.data.settings.sound, false);

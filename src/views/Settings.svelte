@@ -90,7 +90,9 @@
   {#if sync.code}
     <p class="mt-1 text-sm opacity-70">
       Last synced {lastSynced}.
-      {#if sync.message}<span class="text-error">{sync.message}</span>{/if}
+      {#if sync.message || sync.storageError}
+        <span class="text-error">{sync.message || 'Device storage is unavailable. Download a backup in Settings.'}</span>
+      {/if}
     </p>
     <p class="mt-3 opacity-80">
       Anyone with your sync code can see and change your logs. It is a bearer password, not an account or recovery credential. Synchronized KV data is plaintext to the service operator; download a backup before rotating or deleting.

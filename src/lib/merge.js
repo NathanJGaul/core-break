@@ -12,10 +12,10 @@ export const MAX_DEVICES = 64;
 
 const TEMPLATE_IDS = new Set(['A', 'B', 'C', 0, 1, 2]);
 const FORM_VALUES = new Set(['clean', 'ok', 'shaky']);
-const TEST_KINDS = new Set(['baseline', 'retest', 'extra']);
+const TEST_KINDS = new Set(['baseline', 'retest', 'block-end', 'extra']);
 const EXERCISES = new Set(['hollow', 'deadbug', 'sideplank', 'bicycle', 'reverse']);
 const SIDES = new Set(['left', 'right']);
-const DECISIONS = new Set(['advance', 'stay']);
+const DECISIONS = new Set(['advance', 'repeat']);
 const KEY_RE = /^[A-Za-z0-9_-]{1,96}$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
@@ -62,7 +62,7 @@ function validMeta(record) {
 function validInterval(interval) {
   if (!allowed(interval, new Set(['ex', 'side', 'pattern', 'work', 'done']))) return false;
   return EXERCISES.has(interval.ex) &&
-    (interval.side === undefined || SIDES.has(interval.side)) &&
+    (interval.side === undefined || interval.side === null || SIDES.has(interval.side)) &&
     (interval.pattern === undefined || typeof interval.pattern === 'string' && interval.pattern.length <= 64) &&
     Number.isInteger(interval.work) && interval.work >= 1 && interval.work <= 60 &&
     typeof interval.done === 'boolean';
