@@ -241,7 +241,7 @@ export function reconcilePrunedState(state, pruned = {}) {
     const markers = isObject(pruned?.[kind]) ? pruned[kind] : {};
     return Object.fromEntries(Object.entries(records).filter(([id, record]) => {
       const marker = markers[id];
-      return !isObject(marker) || compareRecords(record, marker) > 0;
+      return !isObject(marker);
     }));
   };
   return {

@@ -25,6 +25,12 @@ class TestNode {
     return node;
   }
 
+  append(...nodes) { for (const node of nodes) this.appendChild(typeof node === 'string' ? this.ownerDocument.createTextNode(node) : node); }
+  prepend(...nodes) { for (const node of [...nodes].reverse()) this.insertBefore(typeof node === 'string' ? this.ownerDocument.createTextNode(node) : node, this.firstChild); }
+  before(...nodes) { if (this.parentNode) for (const node of nodes) this.parentNode.insertBefore(typeof node === 'string' ? this.ownerDocument.createTextNode(node) : node, this); }
+  after(...nodes) { if (this.parentNode) for (const node of nodes) this.parentNode.insertBefore(typeof node === 'string' ? this.ownerDocument.createTextNode(node) : node, this.nextSibling); }
+  replaceWith(...nodes) { if (this.parentNode) { for (const node of nodes) this.parentNode.insertBefore(typeof node === 'string' ? this.ownerDocument.createTextNode(node) : node, this); this.parentNode.removeChild(this); } }
+
   insertBefore(node, anchor) {
     if (node.nodeType === 11) {
       while (node.firstChild) this.insertBefore(node.firstChild, anchor);
@@ -66,6 +72,7 @@ class TestNode {
   get lastChild() { return this.childNodes.at(-1) ?? null; }
   get parentElement() { return this.parentNode?.nodeType === 1 ? this.parentNode : null; }
   get nextSibling() {
+    if (!this) return null;
     if (!this.parentNode) return null;
     const index = this.parentNode.childNodes.indexOf(this);
     return this.parentNode.childNodes[index + 1] ?? null;
@@ -86,11 +93,14 @@ class TestNode {
   }
 
   cloneNode(deep = false) {
-    const clone = new TestNode(this.ownerDocument, this.nodeType, this.data);
+    const clone = new this.constructor(this.ownerDocument, this.nodeType, this.data);
     if (deep) for (const child of this.childNodes) clone.appendChild(child.cloneNode(true));
     return clone;
   }
 }
+
+class TestText extends TestNode {}
+class TestComment extends TestNode {}
 
 class TestEvent {
   constructor(type, options = {}) {
@@ -267,8 +277,8 @@ class TestDocument extends TestNode {
 
   createElement(tagName) { return tagName.toLowerCase() === 'template' ? new TestTemplate(this) : new TestElement(this, tagName); }
   createElementNS(_namespace, tagName) { return this.createElement(tagName); }
-  createTextNode(data) { return new TestNode(this, 3, String(data)); }
-  createComment(data) { return new TestNode(this, 8, String(data)); }
+  createTextNode(data) { return new TestText(this, 3, String(data)); }
+  createComment(data) { return new TestComment(this, 8, String(data)); }
   createDocumentFragment() { return new TestNode(this, 11); }
   querySelectorAll(selector) { return this.documentElement.querySelectorAll(selector); }
   querySelector(selector) { return this.documentElement.querySelector(selector); }
@@ -291,6 +301,8 @@ function installDom() {
   globalThis.location = window.location;
   Object.defineProperty(globalThis, 'navigator', { configurable: true, writable: true, value: window.navigator });
   globalThis.Node = TestNode;
+  globalThis.Text = TestText;
+  globalThis.Comment = TestComment;
   globalThis.Element = TestElement;
   globalThis.HTMLElement = TestElement;
   globalThis.SVGElement = TestElement;
@@ -318,7 +330,8 @@ function inputValue(element, value) {
 function flush() { return new Promise((resolve) => setTimeout(resolve, 0)); }
 
 const document = installDom();
-const { mount, unmount, tick } = await import('svelte');
+const svelteClient = import.meta.resolve('svelte').replace(/index-server\.js$/, 'index-client.js');
+const { mount, unmount, tick } = await import(svelteClient);
 const root = resolve(process.cwd());
 const generated = await mkdtemp(resolve(root, 'tests/.ui-generated-'));
 const { app, sync, setSyncCode, syncNow } = await import('../src/lib/store.svelte.js');
@@ -330,8 +343,8 @@ async function component(name, sourcePath) {
   const source = await readFile(sourcePath, 'utf8');
   let code = compile(source, { filename: sourcePath, generate: 'client' }).js.code;
   const imports = name === 'Settings'
-    ? [['../lib/store.svelte.js', '../src/lib/store.svelte.js'], ['../lib/audio.js', '../src/lib/audio.js']]
-    : [['../lib/store.svelte.js', '../src/lib/store.svelte.js'], ['../lib/program.js', '../src/lib/program.js']];
+    ? [['../lib/store.svelte.js', 'src/lib/store.svelte.js'], ['../lib/audio.js', 'src/lib/audio.js']]
+    : [['../lib/store.svelte.js', 'src/lib/store.svelte.js'], ['../lib/program.js', 'src/lib/program.js']];
   for (const [from, to] of imports) code = code.replaceAll(`'${from}'`, `'${pathToFileURL(resolve(root, to)).href}'`);
   const target = resolve(generated, `${name}.js`);
   await writeFile(target, code);
@@ -360,8 +373,9 @@ function mounted(Component, props = {}) {
 
 test('onboarding drives connect and renders revoked and storage failure states', async () => {
   globalThis.fetch = async () => new Response(JSON.stringify({ state: emptyState(), revision: 1 }), { status: 200 });
-  const { target, instance } = mounted(Onboarding, { onbaseline() {} });
+  let { target, instance } = mounted(Onboarding, { onbaseline() {} });
   button(target, 'Already using Core Break').click();
+  await tick();
   const code = 'C'.repeat(32);
   inputValue(input(target, 'join-code'), code);
   button(target, 'Connect').click();
@@ -370,12 +384,18 @@ test('onboarding drives connect and renders revoked and storage failure states',
 
   sync.status = 'revoked';
   sync.message = 'This sync code was revoked.';
+  unmount(instance);
+  ({ target, instance } = mounted(Onboarding, { onbaseline() {} }));
+  button(target, 'Already using Core Break').click();
   await tick();
   assert.match(textOf(target), /This sync code was revoked/);
 
   sync.status = 'idle';
   sync.message = '';
   sync.storageError = true;
+  unmount(instance);
+  ({ target, instance } = mounted(Onboarding, { onbaseline() {} }));
+  button(target, 'Already using Core Break').click();
   await tick();
   assert.match(textOf(target), /Device storage is unavailable/);
   unmount(instance);
@@ -391,9 +411,11 @@ test('settings drives connect and exposes sync lifecycle confirmations and failu
   assert.equal(sync.code, 'D'.repeat(32));
   unmount(first.instance);
 
-  const active = mounted(Settings);
+  let active = mounted(Settings);
   sync.status = 'revoked';
   sync.message = 'This sync code was revoked.';
+  unmount(active.instance);
+  active = mounted(Settings);
   await tick();
   assert.match(textOf(active.target), /This sync code was revoked/);
 
@@ -412,6 +434,8 @@ test('settings drives connect and exposes sync lifecycle confirmations and failu
   sync.status = 'error';
   sync.message = '';
   sync.storageError = true;
+  unmount(active.instance);
+  active = mounted(Settings);
   await tick();
   assert.match(textOf(active.target), /Device storage is unavailable/);
   unmount(active.instance);

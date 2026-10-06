@@ -7,6 +7,7 @@ import {
   mergeStates,
   isValidState,
   canPruneTombstones,
+  reconcilePrunedState,
   MAX_STATE_BYTES,
   MAX_RECORDS
 } from '../src/lib/merge.js';
@@ -41,6 +42,30 @@ test('tombstone pruning never treats missing or negative revisions as acknowledg
   state.sessions.deleted.deletedRevision = -1;
   assert.equal(validateState(state).ok, false);
   assert.equal(canPruneTombstones(state, { 'device-a': 10 }), false);
+});
+
+test('pruned tombstones reject newer offline copies of deleted records', () => {
+  const tombstone = {
+    id: 's1',
+    updatedAt: 10,
+    writerId: 'device-a',
+    opId: 'delete-s1',
+    deleted: true,
+    deletedAt: 10,
+    deletedRevision: 1,
+    date: '2026-10-06',
+    blockStart: '2026-10-01',
+    template: 'A',
+    block: 0,
+    form: 'clean',
+    intervals: Array.from({ length: 5 }, () => ({ ex: 'hollow', work: 20, done: true }))
+  };
+  const offlineCopy = { ...tombstone, updatedAt: 11, writerId: 'device-b', opId: 'offline-s1', deleted: false };
+  const reconciled = reconcilePrunedState(
+    { ...emptyState(), sessions: { [offlineCopy.id]: offlineCopy } },
+    { sessions: { [tombstone.id]: tombstone }, tests: {} }
+  );
+  assert.equal(reconciled.sessions.s1, undefined);
 });
 
 test('equal timestamps use writer and operation identity regardless of argument order', () => {
