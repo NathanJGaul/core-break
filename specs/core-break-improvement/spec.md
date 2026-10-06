@@ -16,7 +16,7 @@ Make the accountless bearer-code sync path durable, bounded, observable, and rec
 ## Non-goals
 - Accounts, email recovery, or a new authentication system.
 - Client-side encryption.
-- Timer redesign; copy remains compatible with measured 4:30–5:00 sessions.
+- Timer redesign; current five-minute wording remains unchanged while measured runtime is accepted as 4:30–5:00.
 - Formal staging, canary, soak, or deployment-gate process.
 - Production deployment.
 
@@ -30,6 +30,6 @@ Make the accountless bearer-code sync path durable, bounded, observable, and rec
 7. Tombstones carry deletion metadata and are retained until device acknowledgements are sufficient; no unsafe automatic compaction occurs. Limits are visible and recoverable through export/prune wording.
 8. Local storage failures are retained in memory and surfaced persistently with backup guidance. Sync failures expose stable codes, retry, and last-successful-sync state without rendering bearer codes.
 9. Settings distinguishes local disable, rotation, and remote deletion with confirmation and code-loss/no-recovery warnings. Sync data is documented as plaintext to the service operator.
-10. Timing copy says about 4:30–5:00 or block-specific duration everywhere while timer logic remains unchanged.
+10. Current five-minute duration copy and timer logic remain unchanged; the measured runtime range of 4:30–5:00 is accepted without a timer redesign.
 11. Security headers, coarse bounded sync rate limiting, redacted structured observability, placeholder/binding preflight, Node runtime floor, npm test/check scripts, service-worker cache versioning and update notification are implemented and behavior tested.
 12. Real unit/API/concurrency behavior tests cover the changed entry points and pass with `npm test`; build and check pass.

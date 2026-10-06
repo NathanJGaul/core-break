@@ -13,7 +13,7 @@ Tests are ordered before implementation tasks and use Node's built-in `node:test
 | T007 | tombstone metadata/ack retention and bounds | coordinator/merge | AC7 |
 | T008 | local write failure remains visible and sync errors/retry/last-successful status are exposed | store actions | AC8 |
 | T009 | Settings lifecycle controls and privacy/recovery wording | rendered UI behavior | AC9 |
-| T010 | duration copy, config preflight, service-worker cache/update behavior | source entry points/scripts | AC10/AC11 |
+| T010 | preserve five-minute duration copy, config preflight, service-worker cache/update behavior | source entry points/scripts | AC10/AC11 |
 | T011 | full API and build smoke | `npm test`, `npm run check`, `npm run build` | AC12 |
 
 No coverage, mutation, or property-testing dependency exists. Deliberate mutant checks in verification target tie comparator, tombstone retention, and protocol rejection.

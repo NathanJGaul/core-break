@@ -1,6 +1,6 @@
 # Core Break
 
-About 4:30–5:00 of core between pomodoro work blocks, with a 4-week progressive program and sync across your devices.
+Five-minute core sessions between pomodoro work blocks, with a 4-week progressive program and sync across your devices.
 
 Built with Svelte 5, daisyUI 5 (Tailwind 4), a Cloudflare Worker, a per-code Durable Object coordinator, and legacy Workers KV migration storage.
 

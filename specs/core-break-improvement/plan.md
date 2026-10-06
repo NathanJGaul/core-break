@@ -23,7 +23,7 @@
 ## Client and UI
 - `src/lib/store.svelte.js` migrates/validates local state, adds stable device ID and revision, preserves local-first commits, reports storage failures, retries sync, and exposes rotate/delete operations.
 - Settings has separate local disable, rotate, remote delete, backup, and privacy/recovery copy. Error panel shows stable sync status, retry, and last success but never code values.
-- Update onboarding/manifest/README copy to measured duration and plaintext/operator access. Keep QR/link behavior but never log links.
+- Preserve the existing five-minute onboarding, manifest, and README wording while accepting the measured 4:30–5:00 runtime; document plaintext/operator access without changing duration copy. Keep QR/link behavior but never log links.
 - Version service-worker cache, delete old caches during activation, keep API uncached, and notify the app when an update is available.
 
 ## Release safety
