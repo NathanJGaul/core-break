@@ -2,6 +2,36 @@ import { readFile } from 'node:fs/promises';
 import { exit } from 'node:process';
 import { VERSION as apiVersion } from '../worker/index.js';
 
+function stripJavaScriptComments(text) {
+  let withoutComments = '';
+  let quote = '';
+  let escaped = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+    const next = text[index + 1];
+    if (quote) {
+      withoutComments += character;
+      if (escaped) escaped = false;
+      else if (character === '\\') escaped = true;
+      else if (character === quote) quote = '';
+    } else if (character === "'" || character === '"' || character === '`') {
+      quote = character;
+      withoutComments += character;
+    } else if (character === '/' && next === '/') {
+      index += 1;
+      while (index + 1 < text.length && text[index + 1] !== '\n') index += 1;
+    } else if (character === '/' && next === '*') {
+      const end = text.indexOf('*/', index + 2);
+      if (end === -1) break;
+      index = end + 1;
+      withoutComments += ' ';
+    } else {
+      withoutComments += character;
+    }
+  }
+  return withoutComments;
+}
+
 function parseJsonc(text) {
   let withoutComments = '';
   let inString = false;
@@ -72,7 +102,7 @@ try {
 const syncNamespace = (Array.isArray(wrangler?.kv_namespaces) ? wrangler.kv_namespaces : []).find((namespace) => namespace?.binding === 'SYNC');
 const coordinatorBinding = (Array.isArray(wrangler?.durable_objects?.bindings) ? wrangler.durable_objects.bindings : []).find((binding) => binding?.name === 'SYNC_COORDINATOR' && binding?.class_name === 'SyncCoordinator');
 const hasCoordinatorMigration = (Array.isArray(wrangler?.migrations) ? wrangler.migrations : []).some((migration) => Array.isArray(migration?.new_sqlite_classes) && migration.new_sqlite_classes.includes('SyncCoordinator'));
-const cacheVersion = serviceWorkerText.match(/^\s*const CACHE\s*=\s*['"]core-break-v([^'"]+)['"]/m)?.[1];
+const cacheVersion = stripJavaScriptComments(serviceWorkerText).match(/^\s*const CACHE\s*=\s*['"]core-break-v([^'"]+)['"]/m)?.[1];
 if (apiVersion !== pkg.version) failures.push(`API version ${apiVersion ?? 'missing'} does not match package version ${pkg.version}`);
 if (cacheVersion !== pkg.version) failures.push(`service-worker cache version ${cacheVersion ?? 'missing'} does not match package version ${pkg.version}`);
 if (!syncNamespace) failures.push('missing SYNC KV binding');
