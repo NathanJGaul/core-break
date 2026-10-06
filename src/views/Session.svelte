@@ -1,6 +1,6 @@
 <script>
   import { onMount, onDestroy, untrack } from 'svelte';
-  import { app, logSession } from '../lib/store.svelte.js';
+  import { app, sync, logSession } from '../lib/store.svelte.js';
   import { buildIntervals, TEMPLATES, SESSION_GET_READY } from '../lib/program.js';
   import { localDate } from '../lib/dates.js';
   import { beep, vibrate, keepAwake } from '../lib/audio.js';
@@ -122,7 +122,7 @@
   }
 
   function save(form) {
-    logSession({
+    const saved = logSession({
       startedAt,
       endedAt,
       date: localDate(new Date(startedAt)),
@@ -132,7 +132,7 @@
       intervals: intervals.map((it, i) => ({ ex: it.ex, side: it.side, pattern: it.pattern, work: it.work, done: done[i] })),
       form
     });
-    onclose();
+    if (saved) onclose();
   }
 
   onMount(() => {
@@ -218,6 +218,9 @@
 {:else}
   <div class="mx-auto flex min-h-dvh w-full max-w-lg flex-col justify-center px-5 py-10">
     <h1 class="font-display text-6xl font-black leading-[0.9]">Session done</h1>
+    {#if sync.errorCode === 'local_state_limit'}
+      <p role="alert" class="mt-3 text-sm text-error">{sync.message}</p>
+    {/if}
     <p class="mt-3 text-lg opacity-80">
       {completedCount} of {intervals.length} intervals completed. How did your form hold up?
     </p>

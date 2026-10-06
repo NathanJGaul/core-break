@@ -1,4 +1,4 @@
-import { emptyState, mergeStates, migrateState, reconcilePrunedState, createDeviceSecret, deviceAcknowledgementProof } from './merge.js';
+import { emptyState, mergeStates, migrateState, reconcilePrunedState, validateState, createDeviceSecret, deviceAcknowledgementProof } from './merge.js';
 import { readItem as readStorageItem, writeItem as writeStorageItem } from './storage.js';
 import { localDate } from './dates.js';
 
@@ -68,9 +68,28 @@ function saveLocal() {
   return ok;
 }
 
-function commit() {
+function commit(nextData) {
+  const validation = validateState(nextData);
+  if (!validation.ok) {
+    sync.status = 'error';
+    sync.errorCode = 'local_state_limit';
+    sync.message = {
+      too_many_records: 'Local data has reached its record limit. Delete old records and clean up deleted history before adding more.',
+      too_many_tombstones: 'Deleted history has reached its limit. Sync and clean up deleted history before deleting more.',
+      too_large: 'Local data has reached its size limit. Download a backup and remove old history before trying again.',
+      invalid_state: 'This change would exceed the local history limit. Download a backup or restart the program to clear block history.'
+    }[validation.code] ?? 'This change would make local data invalid. Download a backup and remove old history before trying again.';
+    return false;
+  }
+  app.data = nextData;
+  if (sync.errorCode === 'local_state_limit') {
+    sync.status = 'idle';
+    sync.errorCode = '';
+    sync.message = '';
+  }
   saveLocal();
   schedulePush();
+  return true;
 }
 
 export function uid() {
@@ -274,78 +293,117 @@ export function initSync() {
 // ---------- Actions ----------
 
 export function startProgram(baselineSeconds) {
+  const data = $state.snapshot(app.data);
   const today = localDate();
   const now = Date.now();
   const id = uid();
-  app.data.tests[id] = { id, writerId: sync.deviceId, opId: uid(), updatedAt: now, at: now, date: today, seconds: baselineSeconds, kind: 'baseline', blockStart: today };
-  app.data.program = { ...$state.snapshot(app.data.program), writerId: sync.deviceId, opId: uid(), updatedAt: now, started: true, blockIndex: 0, blockStart: today, history: [] };
-  commit();
-  if (!sync.code) setSyncCode(generateCode());
+  const saved = commit({
+    ...data,
+    tests: {
+      ...data.tests,
+      [id]: { id, writerId: sync.deviceId, opId: uid(), updatedAt: now, at: now, date: today, seconds: baselineSeconds, kind: 'baseline', blockStart: today }
+    },
+    program: { ...data.program, writerId: sync.deviceId, opId: uid(), updatedAt: now, started: true, blockIndex: 0, blockStart: today, history: [] }
+  });
+  if (saved && !sync.code) setSyncCode(generateCode());
+  return saved;
 }
 
 export function logSession(record) {
+  const data = $state.snapshot(app.data);
   const now = Date.now();
   const id = uid();
-  app.data.sessions[id] = { id, writerId: sync.deviceId, opId: uid(), updatedAt: now, ...record };
-  commit();
+  return commit({
+    ...data,
+    sessions: { ...data.sessions, [id]: { id, writerId: sync.deviceId, opId: uid(), updatedAt: now, ...record } }
+  });
 }
 
 export function deleteSession(id) {
-  const s = app.data.sessions[id];
-  if (!s) return;
-  app.data.sessions[id] = { ...s, deleted: true, deletedAt: Date.now(), deletedRevision: Math.max(sync.revision + 1, s.deletedRevision ?? 0), writerId: sync.deviceId, opId: uid(), updatedAt: Date.now() };
-  commit();
+  const data = $state.snapshot(app.data);
+  const session = data.sessions[id];
+  if (!session) return false;
+  const now = Date.now();
+  return commit({
+    ...data,
+    sessions: {
+      ...data.sessions,
+      [id]: { ...session, deleted: true, deletedAt: now, deletedRevision: Math.max(sync.revision + 1, session.deletedRevision ?? 0), writerId: sync.deviceId, opId: uid(), updatedAt: now }
+    }
+  });
 }
 
 export function logTest(seconds, kind = 'extra') {
+  const data = $state.snapshot(app.data);
   const now = Date.now();
   const id = uid();
-  app.data.tests[id] = {
-    id,
-    writerId: sync.deviceId,
-    opId: uid(),
-    updatedAt: now,
-    at: now,
-    date: localDate(),
-    seconds,
-    kind,
-    blockStart: app.data.program.blockStart
-  };
-  commit();
+  return commit({
+    ...data,
+    tests: {
+      ...data.tests,
+      [id]: {
+        id,
+        writerId: sync.deviceId,
+        opId: uid(),
+        updatedAt: now,
+        at: now,
+        date: localDate(),
+        seconds,
+        kind,
+        blockStart: data.program.blockStart
+      }
+    }
+  });
 }
 
 export function deleteTest(id) {
-  const t = app.data.tests[id];
-  if (!t) return;
-  app.data.tests[id] = { ...t, deleted: true, deletedAt: Date.now(), deletedRevision: Math.max(sync.revision + 1, t.deletedRevision ?? 0), writerId: sync.deviceId, opId: uid(), updatedAt: Date.now() };
-  commit();
+  const data = $state.snapshot(app.data);
+  const test = data.tests[id];
+  if (!test) return false;
+  const now = Date.now();
+  return commit({
+    ...data,
+    tests: {
+      ...data.tests,
+      [id]: { ...test, deleted: true, deletedAt: now, deletedRevision: Math.max(sync.revision + 1, test.deletedRevision ?? 0), writerId: sync.deviceId, opId: uid(), updatedAt: now }
+    }
+  });
 }
 
 
 export function decideBlock(decision) {
-  const p = $state.snapshot(app.data.program);
+  const data = $state.snapshot(app.data);
+  const p = data.program;
   const today = localDate();
-  app.data.program = {
-    ...p,
-    writerId: sync.deviceId,
-    opId: uid(),
-    updatedAt: Date.now(),
-    blockIndex: decision === 'advance' ? p.blockIndex + 1 : p.blockIndex,
-    blockStart: today,
-    history: [...(p.history ?? []), { blockIndex: p.blockIndex, start: p.blockStart, end: today, decision }]
-  };
-  commit();
+  return commit({
+    ...data,
+    program: {
+      ...p,
+      writerId: sync.deviceId,
+      opId: uid(),
+      updatedAt: Date.now(),
+      blockIndex: decision === 'advance' ? p.blockIndex + 1 : p.blockIndex,
+      blockStart: today,
+      history: [...(p.history ?? []), { blockIndex: p.blockIndex, start: p.blockStart, end: today, decision }]
+    }
+  });
 }
 
 export function updateSettings(patch) {
-  app.data.settings = { ...$state.snapshot(app.data.settings), ...patch, writerId: sync.deviceId, opId: uid(), updatedAt: Date.now() };
-  commit();
+  const data = $state.snapshot(app.data);
+  return commit({
+    ...data,
+    settings: { ...data.settings, ...patch, writerId: sync.deviceId, opId: uid(), updatedAt: Date.now() }
+  });
 }
 
 export function resetProgram() {
+  const data = $state.snapshot(app.data);
   const now = Date.now();
-  app.data.program = { ...$state.snapshot(app.data.program), writerId: sync.deviceId, opId: uid(), updatedAt: now, started: false, blockIndex: 0, blockStart: null, history: [] };
-  commit();
+  return commit({
+    ...data,
+    program: { ...data.program, writerId: sync.deviceId, opId: uid(), updatedAt: now, started: false, blockIndex: 0, blockStart: null, history: [] }
+  });
 }
 
 export function exportData() {

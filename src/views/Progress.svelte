@@ -1,5 +1,5 @@
 <script>
-  import { app, deleteSession, deleteTest } from '../lib/store.svelte.js';
+  import { app, sync, deleteSession, deleteTest } from '../lib/store.svelte.js';
   import { PATTERNS, getBlock } from '../lib/program.js';
   import { activeSessions, activeTests, sessionsByDate, weeklyPatternSets, streak } from '../lib/stats.js';
   import { formatShort } from '../lib/dates.js';
@@ -30,6 +30,9 @@
 </script>
 
 <h1 class="font-display text-5xl font-black leading-none">Progress</h1>
+{#if sync.errorCode === 'local_state_limit'}
+  <p role="alert" class="mt-3 text-sm text-error">{sync.message}</p>
+{/if}
 
 <section class="mt-8">
   <div class="flex items-end justify-between gap-4">

@@ -173,6 +173,9 @@
     </div>
   {:else}
     <p class="mt-1 opacity-80">Sync is off. Your logs are saved only on this device.</p>
+    {#if sync.errorCode === 'local_state_limit'}
+      <p role="alert" class="mt-2 text-sm text-error">{sync.message}</p>
+    {/if}
     <div class="mt-3 flex flex-wrap gap-2">
       <button class="btn btn-primary btn-sm" onclick={() => setSyncCode(generateCode())}>Create a new sync code</button>
     </div>

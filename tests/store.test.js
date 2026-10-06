@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { emptyState, validateState, verifyDeviceAcknowledgement } from '../src/lib/merge.js';
+import { emptyState, MAX_HISTORY, MAX_RECORDS, MAX_TOMBSTONES, validateState, verifyDeviceAcknowledgement } from '../src/lib/merge.js';
 
 class FakeStorage {
   constructor() {
@@ -160,6 +160,51 @@ test('rotation and remote deletion update the persisted sync lifecycle', async (
   assert.equal(sync.code, null);
   assert.equal(storage.getItem('core-break:sync-code'), null);
   assert.equal(calls.some(({ method }) => method === 'DELETE'), true);
+});
+
+test('local actions reject states beyond sync bounds without changing local data', () => {
+  reset();
+  const full = emptyState();
+  for (let i = 0; i < MAX_RECORDS; i += 1) {
+    const id = `test-${i}`;
+    full.tests[id] = { id, writerId: 'device-a', opId: `op-${i}`, updatedAt: i, at: i, date: '2026-10-06', seconds: 1, kind: 'extra', blockStart: null };
+  }
+  app.data = full;
+  const beforeRecords = structuredClone(app.data);
+  const beforeStorage = JSON.stringify(full);
+  storage.setItem('core-break:data', beforeStorage);
+  assert.equal(logTest(2), false);
+  assert.deepEqual(app.data, beforeRecords);
+  assert.equal(storage.getItem('core-break:data'), beforeStorage);
+  assert.equal(sync.errorCode, 'local_state_limit');
+  assert.match(sync.message, /record limit/);
+
+  reset();
+  const tombstoneState = emptyState();
+  for (let i = 0; i < MAX_TOMBSTONES; i += 1) {
+    const id = `deleted-${i}`;
+    tombstoneState.tests[id] = { id, writerId: 'device-a', opId: `deleted-op-${i}`, updatedAt: i, at: i, date: '2026-10-06', seconds: 1, kind: 'extra', blockStart: null, deleted: true, deletedAt: i, deletedRevision: i };
+  }
+  tombstoneState.tests.keep = { id: 'keep', writerId: 'device-a', opId: 'keep-op', updatedAt: 1, at: 1, date: '2026-10-06', seconds: 1, kind: 'extra', blockStart: null };
+  app.data = tombstoneState;
+  const beforeTombstone = structuredClone(app.data);
+  assert.equal(deleteTest('keep'), false);
+  assert.deepEqual(app.data, beforeTombstone);
+  assert.match(sync.message, /Deleted history/);
+
+  reset();
+  const historyState = emptyState();
+  historyState.program = {
+    ...historyState.program,
+    started: true,
+    blockStart: '2026-10-06',
+    history: Array.from({ length: MAX_HISTORY }, (_, index) => ({ blockIndex: 0, start: '2026-10-01', end: '2026-10-02', decision: index % 2 ? 'repeat' : 'advance' }))
+  };
+  app.data = historyState;
+  const beforeHistory = structuredClone(app.data);
+  assert.equal(decideBlock('repeat'), false);
+  assert.deepEqual(app.data, beforeHistory);
+  assert.match(sync.message, /history limit/);
 });
 
 test('public record actions persist validator-compatible sessions, tests, decisions, and tombstones', () => {
