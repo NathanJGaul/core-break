@@ -2,7 +2,7 @@ import { validateState, MAX_REQUEST_BYTES } from '../src/lib/merge.js';
 import { SyncCoordinator } from './sync-coordinator.js';
 
 const CODE_RE = /^[A-Z2-7]{32}$/;
-const VERSION = '2.0.0';
+export const VERSION = '2.0.0';
 const DEVICE_RE = /^[A-Za-z0-9:_-]{1,128}$/;
 const PROOF_RE = /^[A-Za-z0-9_-]{43}$/;
 const RATE_WINDOW_MS = 60_000;
@@ -90,6 +90,14 @@ function statusError(status) {
   if (status === 429) return 'rate_limited';
   if (status >= 500) return 'internal_error';
   return 'request_error';
+}
+
+async function assetResponse(request, env, id) {
+  const response = await env.ASSETS.fetch(request);
+  const headers = new Headers(response.headers);
+  const security = baseHeaders(id, env);
+  for (const name of ['x-content-type-options', 'referrer-policy', 'permissions-policy', 'content-security-policy']) headers.set(name, security[name]);
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
 async function forward(env, code, path, method, body, requestIdValue) {
@@ -200,7 +208,7 @@ export default {
       else if (url.pathname === '/api/sync/prune') response = await handlePrune(request, env, id);
       else if (url.pathname === '/api/sync') response = await handleSync(request, env, id);
       else if (url.pathname.startsWith('/api/')) response = json({ error: 'not_found' }, 404, id, env);
-      else response = await env.ASSETS.fetch(request);
+      else response = await assetResponse(request, env, id);
     } catch {
       response = json({ error: 'internal_error' }, 500, id, env);
     } finally {

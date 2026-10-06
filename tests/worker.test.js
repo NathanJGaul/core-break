@@ -90,6 +90,22 @@ test('health and API responses expose request/version headers without state', as
   assert.equal(JSON.stringify(result).includes(code), false);
 });
 
+test('asset responses add security headers without replacing asset metadata', async () => {
+  const runtime = env();
+  runtime.ASSETS = {
+    fetch: () => new Response('<main>asset</main>', { headers: { 'content-type': 'text/html', 'cache-control': 'public, max-age=60' } })
+  };
+  const response = await call('/', {}, runtime);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('content-type'), 'text/html');
+  assert.equal(response.headers.get('cache-control'), 'public, max-age=60');
+  assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
+  assert.equal(response.headers.get('referrer-policy'), 'no-referrer');
+  assert.equal(response.headers.get('permissions-policy'), 'camera=(), microphone=(), geolocation=()');
+  assert.match(response.headers.get('content-security-policy'), /frame-ancestors 'none'/);
+  assert.equal(await response.text(), '<main>asset</main>');
+});
+
 test('rejects malformed credentials, future protocols, and actual oversized bodies', async () => {
   const runtime = env();
   assert.equal((await call('/api/sync', { method: 'GET' }, runtime)).status, 401);
