@@ -10,7 +10,7 @@
 - `tests/storage.test.js`: local storage round-trip and quota failure return semantics.
 - Deliberate writer comparator mutant changed the equal-timestamp winner and was detected by the expected `writer-b` test. Deliberate `Math.min`→`Math.max` tombstone acknowledgement mutant changed the prune decision and was detected by the 409 test. Disabling the Worker rate gate produced a real 401 !== 429 red, then restoring it returned the rate test green.
 
-- `node --test tests/merge.test.js` and `node --test tests/storage.test.js` were run as focused file cycles; `npm test` completed 11 passing tests and 0 failures after the final changes.
+- `node --test tests/merge.test.js` and `node --test tests/storage.test.js` were run as focused file cycles; `npm test` completed 28 passing tests and 0 failures after the final changes.
 - `npm run check` passed in local mode; `npm run build` passed; local Worker health returned 200 with version 2.0.0 and API auth returned 401.
 - No coverage, mutation, property-based, browser, contract, snapshot, or watch runner is installed. Deliberate mutants cover the highest-risk comparator and tombstone invariants; browser/service-worker update behavior remains a manual smoke surface.
 - No production deployment or live Cloudflare resource validation was performed. The configuration preflight correctly fails on the repository's explicit placeholder KV ID.
