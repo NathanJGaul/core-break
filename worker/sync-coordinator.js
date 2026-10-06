@@ -130,6 +130,11 @@ export class SyncCoordinator {
     return null;
   }
 
+  async clearLegacy(request) {
+    const key = request.headers.get('x-legacy-key');
+    if (this.env.SYNC && /^user:[a-f0-9]{64}$/.test(key ?? '')) await this.env.SYNC.delete(key);
+  }
+
   async handle(request) {
     const url = new URL(request.url);
     const meta = await this.meta();
@@ -162,12 +167,14 @@ export class SyncCoordinator {
     if (url.pathname === '/internal/revoke' && request.method === 'POST') {
       const body = await request.json().catch(() => null);
       const replacement = body?.replacement ?? meta.replacement;
+      await this.clearLegacy(request);
       const next = { ...meta, revoked: true, replacement: replacement ?? null, devices: {} };
       await this.storage.put('meta', next);
       await this.storage.delete('state');
       return response({ ok: true, replacement });
     }
     if (url.pathname === '/internal/delete' && request.method === 'DELETE') {
+      await this.clearLegacy(request);
       await this.storage.delete('state');
       await this.storage.put('meta', { ...meta, revoked: true, replacement: null, devices: {} });
       return response({ ok: true });

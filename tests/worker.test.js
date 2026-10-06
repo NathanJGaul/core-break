@@ -29,6 +29,7 @@ class MemoryKV {
   constructor() { this.values = new Map(); }
   async get(key, type) { const value = this.values.get(key); return type === 'json' && value ? JSON.parse(value) : value ?? null; }
   async put(key, value) { this.values.set(key, value); }
+  async delete(key) { this.values.delete(key); }
 }
 
 const code = 'A'.repeat(32);
@@ -131,6 +132,7 @@ test('rotation copies state, revokes the old code, and deletion leaves a revocat
     body: JSON.stringify(await protocol2('device-a', 0, stateWith('keep')))
   }, runtime);
   assert.equal(put.status, 200);
+  await runtime.SYNC.put(await keyFor(code), JSON.stringify(stateWith('legacy-old')));
   const coordinator = runtime.SYNC_COORDINATOR.get(await keyFor(code));
   const firstPrepare = await coordinator.fetch(new Request('https://coordinator.internal/internal/prepare-rotation', { method: 'POST', headers: { 'x-sync-code': code } }));
   const secondPrepare = await coordinator.fetch(new Request('https://coordinator.internal/internal/prepare-rotation', { method: 'POST', headers: { 'x-sync-code': code } }));
@@ -145,9 +147,14 @@ test('rotation copies state, revokes the old code, and deletion leaves a revocat
     body: JSON.stringify(await protocol2('device-a', 1, stateWith('keep'), false))
   }, runtime);
   assert.equal(replacementPut.status, 200);
+  assert.equal(await runtime.SYNC.get(await keyFor(code)), null);
+  await runtime.SYNC.put(await keyFor(replacement.code), JSON.stringify(stateWith('legacy-replacement')));
+  assert.ok(await runtime.SYNC.get(await keyFor(replacement.code)));
   assert.equal((await call('/api/sync', { headers: { authorization: `Bearer ${replacement.code}` } }, runtime)).status, 200);
   const deleted = await call('/api/sync', { method: 'DELETE', headers: { authorization: `Bearer ${replacement.code}` } }, runtime);
   assert.equal(deleted.status, 200);
+  assert.equal(await runtime.SYNC.get(await keyFor(replacement.code)), null);
+  assert.equal(await runtime.SYNC.get(await keyFor(code)), null);
   assert.equal((await call('/api/sync', { headers: { authorization: `Bearer ${replacement.code}` } }, runtime)).status, 410);
   assert.equal((await call('/api/sync', { method: 'PUT', headers: { authorization: `Bearer ${replacement.code}`, 'content-type': 'application/json' }, body: JSON.stringify({ state: stateWith('recreate') }) }, runtime)).status, 410);
 });
