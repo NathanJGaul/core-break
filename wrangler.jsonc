@@ -15,5 +15,9 @@
       // Paste the id printed by: npx wrangler kv namespace create SYNC
       "id": "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
     }
-  ]
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "SYNC_COORDINATOR", "class_name": "SyncCoordinator" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["SyncCoordinator"] }]
 }

@@ -23,10 +23,10 @@
 
 <section class="pt-4">
   <h1 class="font-display text-6xl font-black leading-[0.9] tracking-tight">
-    Five minutes of core between work blocks.
+    About 4:30–5:00 of core between work blocks.
   </h1>
   <p class="mt-5 max-w-prose text-lg leading-relaxed opacity-80">
-    Each break is five one-minute intervals on the floor. The app rotates your moves through the day and makes them harder every four weeks.
+    Each break is five one-minute intervals on the floor. Depending on the block, a session lasts about 4:30–5:00. The app rotates your moves through the day and makes them harder every four weeks.
   </p>
 
   <div class="mt-8">

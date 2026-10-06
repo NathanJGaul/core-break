@@ -1,9 +1,15 @@
 // Network-first cache for the app shell so the app opens offline.
 // The sync API is never cached.
-const CACHE = 'core-break-v1';
+const CACHE = 'core-break-v2.0.0';
 
 self.addEventListener('install', () => self.skipWaiting());
-self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
+self.addEventListener('activate', (e) => e.waitUntil(
+  caches.keys()
+    .then((keys) => Promise.all(keys.filter((key) => key.startsWith('core-break-') && key !== CACHE).map((key) => caches.delete(key))))
+    .then(() => self.clients.claim())
+    .then(() => self.clients.matchAll({ type: 'window' }))
+    .then((clients) => clients.forEach((client) => client.postMessage({ type: 'core-break-update', cache: CACHE })))
+));
 
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);

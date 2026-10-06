@@ -2,7 +2,7 @@
   import QRCode from 'qrcode';
   import {
     app, sync, syncNow, setSyncCode, normalizeCode, formatCode, generateCode,
-    updateSettings, exportData, resetProgram
+    rotateSyncCode, deleteRemoteData, updateSettings, exportData, resetProgram
   } from '../lib/store.svelte.js';
   import { unlockAudio, beep } from '../lib/audio.js';
 
@@ -13,6 +13,8 @@
   let joinError = $state('');
   let confirmReset = $state(false);
   let confirmOff = $state(false);
+  let confirmRotate = $state(false);
+  let confirmDelete = $state(false);
 
   const link = $derived(sync.code ? `${location.origin}/#sync=${sync.code}` : '');
   const lastSynced = $derived(
@@ -48,6 +50,20 @@
     unlockAudio();
     beep(1175, 380, 0.35);
   }
+
+  async function rotate() {
+    if (await rotateSyncCode()) {
+      confirmRotate = false;
+      showCode = false;
+    }
+  }
+
+  async function removeRemote() {
+    if (await deleteRemoteData()) {
+      confirmDelete = false;
+      showCode = false;
+    }
+  }
 </script>
 
 <h1 class="font-display text-5xl font-black leading-none">Settings</h1>
@@ -77,7 +93,7 @@
       {#if sync.message}<span class="text-error">{sync.message}</span>{/if}
     </p>
     <p class="mt-3 opacity-80">
-      Anyone with your sync code can see and change your logs. Keep it private, like a password.
+      Anyone with your sync code can see and change your logs. It is a bearer password, not an account or recovery credential. Synchronized KV data is plaintext to the service operator; download a backup before rotating or deleting.
     </p>
 
     {#if showCode}
@@ -120,6 +136,31 @@
         </div>
       {:else}
         <button class="btn btn-ghost btn-sm px-0 text-error" onclick={() => (confirmOff = true)}>Turn off sync on this device</button>
+      {/if}
+    </div>
+
+    <div class="mt-5 flex flex-wrap gap-3">
+      {#if confirmRotate}
+        <div class="w-full rounded-box bg-base-200 p-4 text-sm">
+          <p>Rotate the shared code? Connected devices using the old code will stop syncing. Download a backup first; there is no account recovery.</p>
+          <div class="mt-2 flex gap-2">
+            <button class="btn btn-sm btn-warning" onclick={rotate}>Rotate code</button>
+            <button class="btn btn-sm btn-ghost" onclick={() => (confirmRotate = false)}>Cancel</button>
+          </div>
+        </div>
+      {:else}
+        <button class="btn btn-ghost btn-sm px-0" onclick={() => (confirmRotate = true)}>Rotate shared code</button>
+      {/if}
+      {#if confirmDelete}
+        <div class="w-full rounded-box bg-base-200 p-4 text-sm">
+          <p>Delete all synced data from the server? This cannot be undone. Export a backup first; local data stays on this device.</p>
+          <div class="mt-2 flex gap-2">
+            <button class="btn btn-sm btn-error" onclick={removeRemote}>Delete synced data</button>
+            <button class="btn btn-sm btn-ghost" onclick={() => (confirmDelete = false)}>Cancel</button>
+          </div>
+        </div>
+      {:else}
+        <button class="btn btn-ghost btn-sm px-0 text-error" onclick={() => (confirmDelete = true)}>Delete synced data</button>
       {/if}
     </div>
   {:else}
