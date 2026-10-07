@@ -13,7 +13,7 @@
     {
       "binding": "SYNC",
       // Paste the id printed by: npx wrangler kv namespace create SYNC
-      "id": "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
+      "id": "51079d9c9475465c8dd85cacea96318c"
     }
   ],
   "durable_objects": {
