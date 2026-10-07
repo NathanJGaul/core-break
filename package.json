@@ -8,6 +8,8 @@
   },
   "scripts": {
     "dev": "vite",
+    "test": "node --test test/*.test.js",
+    "check": "node scripts/check.js",
     "build": "vite build",
     "test": "node --test tests/*.test.js",
     "check": "node scripts/check-config.mjs --local",

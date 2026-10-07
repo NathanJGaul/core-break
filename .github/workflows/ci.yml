@@ -15,7 +15,7 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
-      - name: Set up Node.js
+      - name: Set up Node.js 22
         uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -26,5 +26,5 @@ jobs:
         run: npm test
       - name: Run checks
         run: npm run check
-      - name: Build
+      - name: Build application
         run: npm run build

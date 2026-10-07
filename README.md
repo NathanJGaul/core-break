@@ -41,6 +41,14 @@ npm test          # pure merge, migration, concurrency, and Worker API behavior 
 npm run check     # source/config checks; local placeholder is allowed
 ```
 
+To run the same validation used by CI:
+
+```sh
+npm test       # core behavior tests
+npm run check  # program and data invariants
+npm run build  # production bundle
+```
+
 ## The program
 
 Each session is five one-minute intervals after a 10-second get-ready countdown. Sessions rotate through three templates so every movement pattern gets covered across the day:
