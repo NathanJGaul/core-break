@@ -1,6 +1,6 @@
 <script>
   import { onDestroy } from 'svelte';
-  import { app, startProgram, logTest } from '../lib/store.svelte.js';
+  import { app, sync, startProgram, logTest } from '../lib/store.svelte.js';
   import { activeTests } from '../lib/stats.js';
   import { beep, vibrate, keepAwake } from '../lib/audio.js';
 
@@ -52,9 +52,8 @@
   }
 
   function save() {
-    if (kind === 'baseline') startProgram(elapsed);
-    else logTest(elapsed, kind);
-    onclose();
+    const saved = kind === 'baseline' ? startProgram(elapsed) : logTest(elapsed, kind);
+    if (saved) onclose();
   }
 
   onDestroy(() => {
@@ -100,6 +99,9 @@
       </div>
     {:else}
       <h1 class="mt-6 font-display text-4xl font-black">Your hold</h1>
+      {#if sync.errorCode === 'local_state_limit'}
+        <p role="alert" class="mt-3 text-sm text-error">{sync.message}</p>
+      {/if}
       <p class="numerals mt-2 text-[8rem] font-black">{elapsed.toFixed(1)}<span class="text-5xl">s</span></p>
       {#if previous}
         {@const diff = elapsed - previous.seconds}

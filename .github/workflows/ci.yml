@@ -6,8 +6,11 @@ on:
     branches:
       - master
 
+permissions:
+  contents: read
+
 jobs:
-  validate:
+  check:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository

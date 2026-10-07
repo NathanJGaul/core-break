@@ -86,7 +86,11 @@
       {#if sync.code && sync.status === 'ok'}
         <p class="mt-2 text-sm opacity-70">Connected. No program found on that code yet, so take the baseline test above.</p>
       {/if}
-      {#if sync.status === 'error' || sync.status === 'offline'}<p class="mt-2 text-sm text-error">{sync.message}</p>{/if}
+      {#if sync.status === 'error' || sync.status === 'offline' || sync.status === 'revoked' || sync.storageError}
+        <p class="mt-2 text-sm text-error">
+          {sync.message || (sync.storageError ? 'Device storage is unavailable. Download a backup in Settings.' : 'Sync is unavailable. Try again when ready.')}
+        </p>
+      {/if}
     {/if}
   </div>
 </section>

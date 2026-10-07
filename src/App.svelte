@@ -20,8 +20,13 @@
   /** @type {null | {type: 'session', templateIndex: number} | {type: 'test', kind: string}} */
   let overlay = $state(null);
   let pendingCode = $state(null);
+  let updateAvailable = $state(false);
 
   onMount(() => {
+    const onUpdate = (event) => {
+      if (event.data?.type === 'core-break-update') updateAvailable = true;
+    };
+    navigator.serviceWorker?.addEventListener('message', onUpdate);
     const match = location.hash.match(/sync=([A-Za-z2-7-]+)/);
     if (match) {
       const code = normalizeCode(match[1]);
@@ -29,6 +34,7 @@
       history.replaceState(null, '', location.pathname);
     }
     initSync();
+    return () => navigator.serviceWorker?.removeEventListener('message', onUpdate);
   });
 
   function joinPending() {
@@ -50,6 +56,12 @@
 {:else}
   <div class="min-h-dvh pb-28">
     <main class="mx-auto w-full max-w-lg px-5 pt-6">
+      {#if updateAvailable}
+        <div role="status" class="alert mb-6 border-primary/30 bg-base-200">
+          <span class="text-sm">A new Core Break version is ready.</span>
+          <button class="btn btn-primary btn-sm" onclick={() => location.reload()}>Reload</button>
+        </div>
+      {/if}
       {#if pendingCode}
         <div role="alert" class="alert alert-vertical sm:alert-horizontal mb-6 border-primary/30 bg-base-200">
           <div>

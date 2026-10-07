@@ -2,7 +2,7 @@
   import QRCode from 'qrcode';
   import {
     app, sync, syncNow, setSyncCode, normalizeCode, formatCode, generateCode,
-    updateSettings, exportData, resetProgram
+    rotateSyncCode, deleteRemoteData, pruneTombstones, updateSettings, exportData, resetProgram
   } from '../lib/store.svelte.js';
   import { unlockAudio, beep } from '../lib/audio.js';
 
@@ -13,6 +13,8 @@
   let joinError = $state('');
   let confirmReset = $state(false);
   let confirmOff = $state(false);
+  let confirmRotate = $state(false);
+  let confirmDelete = $state(false);
 
   const link = $derived(sync.code ? `${location.origin}/#sync=${sync.code}` : '');
   const lastSynced = $derived(
@@ -48,6 +50,20 @@
     unlockAudio();
     beep(1175, 380, 0.35);
   }
+
+  async function rotate() {
+    if (await rotateSyncCode()) {
+      confirmRotate = false;
+      showCode = false;
+    }
+  }
+
+  async function removeRemote() {
+    if (await deleteRemoteData()) {
+      confirmDelete = false;
+      showCode = false;
+    }
+  }
 </script>
 
 <h1 class="font-display text-5xl font-black leading-none">Settings</h1>
@@ -74,10 +90,12 @@
   {#if sync.code}
     <p class="mt-1 text-sm opacity-70">
       Last synced {lastSynced}.
-      {#if sync.message}<span class="text-error">{sync.message}</span>{/if}
+      {#if sync.message || sync.storageError}
+        <span class="text-error">{sync.message || 'Device storage is unavailable. Download a backup in Settings.'}</span>
+      {/if}
     </p>
     <p class="mt-3 opacity-80">
-      Anyone with your sync code can see and change your logs. Keep it private, like a password.
+      Anyone with your sync code can see and change your logs. It is a bearer password, not an account or recovery credential. Synchronized KV data is plaintext to the service operator; download a backup before rotating or deleting.
     </p>
 
     {#if showCode}
@@ -102,6 +120,12 @@
     {/if}
 
     <div class="mt-6">
+      <p class="text-sm font-semibold">Clean up deleted history</p>
+      <p class="mt-1 text-sm opacity-60">Removes deleted records after every known device has acknowledged them. Devices that have not synced keep cleanup blocked.</p>
+      <button class="btn btn-ghost btn-sm mt-2 px-0" onclick={() => pruneTombstones()} disabled={sync.status === 'syncing'}>Clean up deleted history</button>
+    </div>
+
+    <div class="mt-6">
       <label class="text-sm font-semibold" for="join">Use a code from another device instead</label>
       <p class="text-sm opacity-60">Logs on this device are merged in. Nothing is deleted.</p>
       <div class="join mt-2 w-full">
@@ -122,8 +146,36 @@
         <button class="btn btn-ghost btn-sm px-0 text-error" onclick={() => (confirmOff = true)}>Turn off sync on this device</button>
       {/if}
     </div>
+
+    <div class="mt-5 flex flex-wrap gap-3">
+      {#if confirmRotate}
+        <div class="w-full rounded-box bg-base-200 p-4 text-sm">
+          <p>Rotate the shared code? Connected devices using the old code will stop syncing. Download a backup first; there is no account recovery.</p>
+          <div class="mt-2 flex gap-2">
+            <button class="btn btn-sm btn-warning" onclick={rotate}>Rotate code</button>
+            <button class="btn btn-sm btn-ghost" onclick={() => (confirmRotate = false)}>Cancel</button>
+          </div>
+        </div>
+      {:else}
+        <button class="btn btn-ghost btn-sm px-0" onclick={() => (confirmRotate = true)}>Rotate shared code</button>
+      {/if}
+      {#if confirmDelete}
+        <div class="w-full rounded-box bg-base-200 p-4 text-sm">
+          <p>Delete all synced data from the server? This cannot be undone. Export a backup first; local data stays on this device.</p>
+          <div class="mt-2 flex gap-2">
+            <button class="btn btn-sm btn-error" onclick={removeRemote}>Delete synced data</button>
+            <button class="btn btn-sm btn-ghost" onclick={() => (confirmDelete = false)}>Cancel</button>
+          </div>
+        </div>
+      {:else}
+        <button class="btn btn-ghost btn-sm px-0 text-error" onclick={() => (confirmDelete = true)}>Delete synced data</button>
+      {/if}
+    </div>
   {:else}
     <p class="mt-1 opacity-80">Sync is off. Your logs are saved only on this device.</p>
+    {#if sync.errorCode === 'local_state_limit'}
+      <p role="alert" class="mt-2 text-sm text-error">{sync.message}</p>
+    {/if}
     <div class="mt-3 flex flex-wrap gap-2">
       <button class="btn btn-primary btn-sm" onclick={() => setSyncCode(generateCode())}>Create a new sync code</button>
     </div>

@@ -1,52 +1,95 @@
-import { emptyState, mergeStates, isValidState } from './merge.js';
+import { emptyState, mergeStates, migrateState, reconcilePrunedState, validateState, createDeviceSecret, deviceAcknowledgementProof } from './merge.js';
+import { readItem as readStorageItem, writeItem as writeStorageItem } from './storage.js';
 import { localDate } from './dates.js';
 
 const DATA_KEY = 'core-break:data';
 const CODE_KEY = 'core-break:sync-code';
 const SYNC_AT_KEY = 'core-break:last-synced';
+const DEVICE_KEY = 'core-break:device-id';
+const DEVICE_SECRET_KEY = 'core-break:device-secret';
+const REVISION_KEY = 'core-break:sync-revision';
+const DEVICE_SECRET_RE = /^[A-Za-z0-9_-]{43}$/;
 
 function readLocal() {
   try {
     const raw = localStorage.getItem(DATA_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (isValidState(parsed)) return mergeStates(emptyState(), parsed);
-    }
+    if (raw) return migrateState(JSON.parse(raw));
   } catch {}
   return emptyState();
 }
 
+function storage() {
+  try { return globalThis.localStorage; } catch { return null; }
+}
+
 function readItem(key) {
-  try {
-    return localStorage.getItem(key);
-  } catch {
-    return null;
-  }
+  const target = storage();
+  return target ? readStorageItem(target, key) : null;
 }
 
 function writeItem(key, value) {
-  try {
-    if (value == null) localStorage.removeItem(key);
-    else localStorage.setItem(key, value);
-  } catch {}
+  const target = storage();
+  return target ? writeStorageItem(target, key, value) : false;
+}
+
+function deviceIdentifier() {
+  const saved = readItem(DEVICE_KEY);
+  if (saved) return saved;
+  const value = crypto.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  writeItem(DEVICE_KEY, value);
+  return value;
+}
+
+function deviceSecret() {
+  const saved = readItem(DEVICE_SECRET_KEY);
+  if (DEVICE_SECRET_RE.test(saved ?? '')) return saved;
+  const value = createDeviceSecret();
+  writeItem(DEVICE_SECRET_KEY, value);
+  return value;
 }
 
 export const app = $state({ data: readLocal() });
 
 export const sync = $state({
   code: readItem(CODE_KEY),
-  status: 'idle', // idle | syncing | ok | offline | error
+  deviceId: deviceIdentifier(),
+  deviceSecret: deviceSecret(),
+  revision: Number(readItem(REVISION_KEY)) || 0,
+  status: 'idle', // idle | syncing | ok | offline | error | revoked
   message: '',
+  errorCode: '',
+  storageError: false,
   lastSynced: Number(readItem(SYNC_AT_KEY)) || null
 });
 
 function saveLocal() {
-  writeItem(DATA_KEY, JSON.stringify($state.snapshot(app.data)));
+  const ok = writeItem(DATA_KEY, JSON.stringify($state.snapshot(app.data)));
+  sync.storageError = !ok;
+  return ok;
 }
 
-function commit() {
+function commit(nextData) {
+  const validation = validateState(nextData);
+  if (!validation.ok) {
+    sync.status = 'error';
+    sync.errorCode = 'local_state_limit';
+    sync.message = {
+      too_many_records: 'Local data has reached its record limit. Delete old records and clean up deleted history before adding more.',
+      too_many_tombstones: 'Deleted history has reached its limit. Sync and clean up deleted history before deleting more.',
+      too_large: 'Local data has reached its size limit. Download a backup and remove old history before trying again.',
+      invalid_state: 'This change would exceed the local history limit. Download a backup or restart the program to clear block history.'
+    }[validation.code] ?? 'This change would make local data invalid. Download a backup and remove old history before trying again.';
+    return false;
+  }
+  app.data = nextData;
+  if (sync.errorCode === 'local_state_limit') {
+    sync.status = 'idle';
+    sync.errorCode = '';
+    sync.message = '';
+  }
   saveLocal();
   schedulePush();
+  return true;
 }
 
 export function uid() {
@@ -90,30 +133,46 @@ export async function syncNow() {
   clearTimeout(pushTimer);
   sync.status = 'syncing';
   sync.message = '';
+  sync.errorCode = '';
   inFlight = (async () => {
     try {
+      const deviceProof = await deviceAcknowledgementProof(sync.deviceSecret, sync.deviceId, sync.revision);
       const res = await fetch('/api/sync', {
         method: 'PUT',
         headers: { 'content-type': 'application/json', authorization: `Bearer ${sync.code}` },
-        body: JSON.stringify({ state: $state.snapshot(app.data) })
+        body: JSON.stringify({ protocol: 2, deviceId: sync.deviceId, deviceSecret: sync.deviceSecret, deviceProof, lastRevision: sync.revision, state: $state.snapshot(app.data) })
       });
       const body = await res.json().catch(() => null);
       if (!res.ok || !body?.state) {
-        sync.status = 'error';
-        sync.message = body?.error ?? `Sync server responded with ${res.status}.`;
+        sync.errorCode = body?.error ?? `http_${res.status}`;
+        sync.status = res.status === 410 ? 'revoked' : 'error';
+        sync.message = {
+          revoked_code: 'This sync code was revoked. Use a current code or connect a new device.',
+          unsupported_protocol: 'This app needs an update before it can sync.',
+          too_large: 'Synced data is at its size limit. Download a backup and prune local history.',
+          invalid_state: 'This device has invalid sync data. Download a backup before continuing.'
+        }[sync.errorCode] ?? `Sync failed (${sync.errorCode}). Changes remain on this device; retry when ready.`;
         return;
       }
-      app.data = mergeStates($state.snapshot(app.data), body.state);
-      saveLocal();
+      const migrated = migrateState(body.state);
+      app.data = mergeStates(reconcilePrunedState($state.snapshot(app.data), body.pruned), migrated);
+      if (!saveLocal()) {
+        sync.status = 'error';
+        sync.errorCode = 'local_storage_unavailable';
+        sync.message = 'Device storage is full or unavailable. Download a backup; sync is paused until storage recovers.';
+        return;
+      }
+      sync.revision = Number(body.revision) || sync.revision;
+      writeItem(REVISION_KEY, String(sync.revision));
       sync.status = 'ok';
       sync.lastSynced = Date.now();
       writeItem(SYNC_AT_KEY, String(sync.lastSynced));
-    } catch {
-      sync.status = navigator.onLine === false ? 'offline' : 'error';
-      sync.message =
-        sync.status === 'offline'
-          ? 'You are offline. Changes are saved on this device and will sync later.'
-          : 'Could not reach the sync server. Changes are saved on this device.';
+    } catch (error) {
+      sync.errorCode = error?.message || 'network_error';
+      sync.status = typeof navigator !== 'undefined' && navigator.onLine === false ? 'offline' : 'error';
+      sync.message = sync.status === 'offline'
+        ? 'You are offline. Changes are saved on this device and will sync later.'
+        : 'Could not reach the sync server. Changes are saved on this device; retry when ready.';
     } finally {
       inFlight = null;
       if (again) {
@@ -125,19 +184,104 @@ export async function syncNow() {
   return inFlight;
 }
 
+export async function pruneTombstones() {
+  if (inFlight) await inFlight;
+  if (!sync.code) return false;
+  sync.status = 'syncing';
+  sync.message = '';
+  sync.errorCode = '';
+  try {
+    const deviceProof = await deviceAcknowledgementProof(sync.deviceSecret, sync.deviceId, sync.revision);
+    const res = await fetch('/api/sync/prune', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${sync.code}` },
+      body: JSON.stringify({ deviceId: sync.deviceId, acknowledgedRevision: sync.revision, deviceProof })
+    });
+    const body = await res.json().catch(() => null);
+    if (!res.ok || !body?.state) {
+      sync.errorCode = body?.error ?? `http_${res.status}`;
+      sync.status = res.status === 410 ? 'revoked' : 'error';
+      sync.message = {
+        revoked_code: 'This sync code was revoked. Use a current code or connect a new device.',
+        tombstones_retained: 'Deleted history is still needed by another device. Sync that device before cleanup.',
+        invalid_acknowledgement: 'This device needs to sync before cleanup can continue.'
+      }[sync.errorCode] ?? `Cleanup failed (${sync.errorCode}). Changes remain on this device; retry when ready.`;
+      return false;
+    }
+    const migrated = migrateState(body.state);
+    app.data = mergeStates(reconcilePrunedState($state.snapshot(app.data), body.pruned), migrated);
+    if (!saveLocal()) {
+      sync.status = 'error';
+      sync.errorCode = 'local_storage_unavailable';
+      sync.message = 'Device storage is full or unavailable. Download a backup; cleanup is paused until storage recovers.';
+      return false;
+    }
+    sync.revision = Number(body.revision) || sync.revision;
+    writeItem(REVISION_KEY, String(sync.revision));
+    sync.status = 'ok';
+    sync.lastSynced = Date.now();
+    writeItem(SYNC_AT_KEY, String(sync.lastSynced));
+    return true;
+  } catch (error) {
+    sync.errorCode = error?.message || 'network_error';
+    sync.status = typeof navigator !== 'undefined' && navigator.onLine === false ? 'offline' : 'error';
+    sync.message = sync.status === 'offline'
+      ? 'You are offline. Changes are saved on this device and cleanup will retry later.'
+      : 'Could not reach the sync server. Changes are saved on this device; retry cleanup when ready.';
+    return false;
+  }
+}
+
 export function setSyncCode(code) {
-  sync.code = code;
-  writeItem(CODE_KEY, code);
-  if (code) syncNow();
+  const normalized = code ? normalizeCode(code) : null;
+  const changed = sync.code !== normalized;
+  sync.code = normalized;
+  if (changed) {
+    sync.revision = 0;
+    if (!writeItem(REVISION_KEY, '0')) sync.storageError = true;
+  }
+  if (!writeItem(CODE_KEY, normalized)) sync.storageError = true;
+  if (normalized) syncNow();
   else {
     sync.status = 'idle';
     sync.message = '';
+    sync.errorCode = '';
+  }
+}
+
+export async function rotateSyncCode() {
+  if (!sync.code) return false;
+  try {
+    const res = await fetch('/api/sync/rotate', { method: 'POST', headers: { authorization: `Bearer ${sync.code}` } });
+    const body = await res.json().catch(() => null);
+    if (!res.ok || !normalizeCode(body?.code)) throw new Error(body?.error ?? 'rotation_failed');
+    setSyncCode(body.code);
+    return true;
+  } catch (error) {
+    sync.status = 'error';
+    sync.errorCode = error?.message ?? 'rotation_failed';
+    sync.message = 'Could not rotate the sync code. Existing local data is unchanged; retry when ready.';
+    return false;
+  }
+}
+
+export async function deleteRemoteData() {
+  if (!sync.code) return false;
+  try {
+    const res = await fetch('/api/sync', { method: 'DELETE', headers: { authorization: `Bearer ${sync.code}` } });
+    const body = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(body?.error ?? 'delete_failed');
+    setSyncCode(null);
+    return true;
+  } catch (error) {
+    sync.status = 'error';
+    sync.errorCode = error?.message ?? 'delete_failed';
+    sync.message = 'Could not delete synced data. Nothing was removed; retry when ready.';
+    return false;
   }
 }
 
 export function initSync() {
-  // A code is created when the program starts, so a new device can join
-  // an existing code during onboarding instead.
   if (sync.code) syncNow();
   else if (app.data.program.started) setSyncCode(generateCode());
   window.addEventListener('online', () => syncNow());
@@ -149,73 +293,117 @@ export function initSync() {
 // ---------- Actions ----------
 
 export function startProgram(baselineSeconds) {
+  const data = $state.snapshot(app.data);
   const today = localDate();
   const now = Date.now();
   const id = uid();
-  app.data.tests[id] = { id, updatedAt: now, at: now, date: today, seconds: baselineSeconds, kind: 'baseline', blockStart: today };
-  app.data.program = { updatedAt: now, started: true, blockIndex: 0, blockStart: today, history: [] };
-  commit();
-  if (!sync.code) setSyncCode(generateCode());
+  const saved = commit({
+    ...data,
+    tests: {
+      ...data.tests,
+      [id]: { id, writerId: sync.deviceId, opId: uid(), updatedAt: now, at: now, date: today, seconds: baselineSeconds, kind: 'baseline', blockStart: today }
+    },
+    program: { ...data.program, writerId: sync.deviceId, opId: uid(), updatedAt: now, started: true, blockIndex: 0, blockStart: today, history: [] }
+  });
+  if (saved && !sync.code) setSyncCode(generateCode());
+  return saved;
 }
 
 export function logSession(record) {
+  const data = $state.snapshot(app.data);
   const now = Date.now();
   const id = uid();
-  app.data.sessions[id] = { id, updatedAt: now, ...record };
-  commit();
+  return commit({
+    ...data,
+    sessions: { ...data.sessions, [id]: { id, writerId: sync.deviceId, opId: uid(), updatedAt: now, ...record } }
+  });
 }
 
 export function deleteSession(id) {
-  const s = app.data.sessions[id];
-  if (!s) return;
-  app.data.sessions[id] = { ...s, deleted: true, updatedAt: Date.now() };
-  commit();
+  const data = $state.snapshot(app.data);
+  const session = data.sessions[id];
+  if (!session) return false;
+  const now = Date.now();
+  return commit({
+    ...data,
+    sessions: {
+      ...data.sessions,
+      [id]: { ...session, deleted: true, deletedAt: now, deletedRevision: Math.max(sync.revision + 1, session.deletedRevision ?? 0), writerId: sync.deviceId, opId: uid(), updatedAt: now }
+    }
+  });
 }
 
 export function logTest(seconds, kind = 'extra') {
+  const data = $state.snapshot(app.data);
   const now = Date.now();
   const id = uid();
-  app.data.tests[id] = {
-    id,
-    updatedAt: now,
-    at: now,
-    date: localDate(),
-    seconds,
-    kind,
-    blockStart: app.data.program.blockStart
-  };
-  commit();
+  return commit({
+    ...data,
+    tests: {
+      ...data.tests,
+      [id]: {
+        id,
+        writerId: sync.deviceId,
+        opId: uid(),
+        updatedAt: now,
+        at: now,
+        date: localDate(),
+        seconds,
+        kind,
+        blockStart: data.program.blockStart
+      }
+    }
+  });
 }
 
 export function deleteTest(id) {
-  const t = app.data.tests[id];
-  if (!t) return;
-  app.data.tests[id] = { ...t, deleted: true, updatedAt: Date.now() };
-  commit();
+  const data = $state.snapshot(app.data);
+  const test = data.tests[id];
+  if (!test) return false;
+  const now = Date.now();
+  return commit({
+    ...data,
+    tests: {
+      ...data.tests,
+      [id]: { ...test, deleted: true, deletedAt: now, deletedRevision: Math.max(sync.revision + 1, test.deletedRevision ?? 0), writerId: sync.deviceId, opId: uid(), updatedAt: now }
+    }
+  });
 }
 
+
 export function decideBlock(decision) {
-  const p = $state.snapshot(app.data.program);
+  const data = $state.snapshot(app.data);
+  const p = data.program;
   const today = localDate();
-  app.data.program = {
-    ...p,
-    updatedAt: Date.now(),
-    blockIndex: decision === 'advance' ? p.blockIndex + 1 : p.blockIndex,
-    blockStart: today,
-    history: [...(p.history ?? []), { blockIndex: p.blockIndex, start: p.blockStart, end: today, decision }]
-  };
-  commit();
+  return commit({
+    ...data,
+    program: {
+      ...p,
+      writerId: sync.deviceId,
+      opId: uid(),
+      updatedAt: Date.now(),
+      blockIndex: decision === 'advance' ? p.blockIndex + 1 : p.blockIndex,
+      blockStart: today,
+      history: [...(p.history ?? []), { blockIndex: p.blockIndex, start: p.blockStart, end: today, decision }]
+    }
+  });
 }
 
 export function updateSettings(patch) {
-  app.data.settings = { ...$state.snapshot(app.data.settings), ...patch, updatedAt: Date.now() };
-  commit();
+  const data = $state.snapshot(app.data);
+  return commit({
+    ...data,
+    settings: { ...data.settings, ...patch, writerId: sync.deviceId, opId: uid(), updatedAt: Date.now() }
+  });
 }
 
 export function resetProgram() {
+  const data = $state.snapshot(app.data);
   const now = Date.now();
-  app.data.program = { updatedAt: now, started: false, blockIndex: 0, blockStart: null, history: [] };
-  commit();
+  return commit({
+    ...data,
+    program: { ...data.program, writerId: sync.deviceId, opId: uid(), updatedAt: now, started: false, blockIndex: 0, blockStart: null, history: [] }
+  });
 }
 
 export function exportData() {

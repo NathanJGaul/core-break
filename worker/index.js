@@ -1,18 +1,38 @@
-import { mergeStates, isValidState } from '../src/lib/merge.js';
+import { validateState, MAX_REQUEST_BYTES } from '../src/lib/merge.js';
+import { SyncCoordinator } from './sync-coordinator.js';
+import { VERSION } from './version.js';
 
-const MAX_BYTES = 10 * 1024 * 1024;
 const CODE_RE = /^[A-Z2-7]{32}$/;
+const DEVICE_RE = /^[A-Za-z0-9:_-]{1,128}$/;
+const PROOF_RE = /^[A-Za-z0-9_-]{43}$/;
+const RATE_WINDOW_MS = 60_000;
+const RATE_LIMIT = 60;
+const rateBuckets = new Map();
 
-function json(body, status = 200) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json', 'cache-control': 'no-store' }
-  });
+function requestId() {
+  return crypto.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
+function baseHeaders(id, env) {
+  return {
+    'content-type': 'application/json',
+    'cache-control': 'no-store',
+    'x-request-id': id,
+    'x-core-break-version': env.VERSION ?? VERSION,
+    'x-content-type-options': 'nosniff',
+    'referrer-policy': 'no-referrer',
+    'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+    'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'"
+  };
+}
+
+function json(body, status = 200, id = requestId(), env = {}) {
+  return new Response(JSON.stringify(body), { status, headers: baseHeaders(id, env) });
 }
 
 async function keyFor(code) {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(code));
-  const hex = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+  const hex = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
   return `user:${hex}`;
 }
 
@@ -22,48 +42,218 @@ function readCode(request) {
   return CODE_RE.test(code) ? code : null;
 }
 
-async function handleSync(request, env) {
-  if (!env.SYNC) return json({ error: 'Sync storage is not set up. Add the SYNC KV binding in wrangler.jsonc.' }, 500);
-
-  const code = readCode(request);
-  if (!code) return json({ error: 'Missing or malformed sync code.' }, 401);
-  const key = await keyFor(code);
-
-  if (request.method === 'GET') {
-    const stored = await env.SYNC.get(key, 'json');
-    return json({ state: stored ?? null });
+function allowSyncRequest(request) {
+  const key = request.headers.get('cf-connecting-ip') ?? 'anonymous';
+  const now = Date.now();
+  const current = rateBuckets.get(key);
+  if (!current || now - current.startedAt >= RATE_WINDOW_MS) {
+    if (rateBuckets.size >= 2048) rateBuckets.delete(rateBuckets.keys().next().value);
+    rateBuckets.set(key, { startedAt: now, count: 1 });
+    return true;
   }
+  current.count += 1;
+  return current.count <= RATE_LIMIT;
+}
 
-  if (request.method === 'PUT') {
-    const length = Number(request.headers.get('content-length') ?? 0);
-    if (length > MAX_BYTES) return json({ error: 'Data too large.' }, 413);
+function coordinator(env, name) {
+  if (!env.SYNC_COORDINATOR) return null;
+  const id = env.SYNC_COORDINATOR.idFromName(name);
+  return env.SYNC_COORDINATOR.get(id);
+}
 
-    let body;
-    try {
-      body = await request.json();
-    } catch {
-      return json({ error: 'Body must be JSON.' }, 400);
+async function parseBody(request) {
+  const declared = Number(request.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > MAX_REQUEST_BYTES) return { error: 'too_large', status: 413 };
+
+  const reader = request.body?.getReader();
+  if (!reader) return { error: 'invalid_json', status: 400 };
+  const chunks = [];
+  let length = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      length += value.byteLength;
+      if (length > MAX_REQUEST_BYTES) {
+        await reader.cancel();
+        return { error: 'too_large', status: 413 };
+      }
+      chunks.push(value);
     }
-    if (!isValidState(body?.state)) return json({ error: 'Body must contain a valid state.' }, 400);
-
-    const stored = await env.SYNC.get(key, 'json');
-    const merged = mergeStates(stored, body.state);
-    const serialized = JSON.stringify(merged);
-    if (serialized.length > MAX_BYTES) return json({ error: 'Data too large.' }, 413);
-
-    // Skip the write when nothing changed (KV free tier allows 1,000 writes a day).
-    if (!stored || JSON.stringify(stored) !== serialized) await env.SYNC.put(key, serialized);
-    return json({ state: merged });
+  } finally {
+    reader.releaseLock();
   }
 
-  return json({ error: 'Method not allowed.' }, 405);
+  const bytes = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  try {
+    return { body: JSON.parse(new TextDecoder().decode(bytes)) };
+  } catch {
+    return { error: 'invalid_json', status: 400 };
+  }
+}
+
+function byteBucket(request) {
+  const raw = request.headers.get('content-length');
+  if (!raw) return 'unknown';
+  const bytes = Number(raw);
+  if (!Number.isFinite(bytes)) return 'unknown';
+  if (bytes < 1024) return 'small';
+  if (bytes < 64 * 1024) return 'medium';
+  if (bytes < 1024 * 1024) return 'large';
+  return 'oversized';
+}
+
+function statusError(status) {
+  if (status < 400) return null;
+  if (status === 401) return 'invalid_code';
+  if (status === 410) return 'revoked_code';
+  if (status === 413) return 'too_large';
+  if (status === 429) return 'rate_limited';
+  if (status >= 500) return 'internal_error';
+  return 'request_error';
+}
+
+async function assetResponse(request, env, id) {
+  const response = await env.ASSETS.fetch(request);
+  const headers = new Headers(response.headers);
+  const security = baseHeaders(id, env);
+  for (const name of ['x-content-type-options', 'referrer-policy', 'permissions-policy', 'content-security-policy']) headers.set(name, security[name]);
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
+async function forward(env, code, path, method, body, requestIdValue) {
+  const key = await keyFor(code);
+  const target = coordinator(env, key);
+  if (!target) return json({ error: 'storage_unavailable' }, 503, requestIdValue, env);
+  const headers = {
+    'x-sync-code': code,
+    'x-legacy-key': await keyFor(code),
+    'x-request-id': requestIdValue
+  };
+  if (body !== undefined) headers['content-type'] = 'application/json';
+  const response = await target.fetch(new Request(`https://coordinator.internal${path}`, {
+    method,
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body)
+  }));
+  const result = await response.json().catch(() => ({ error: 'storage_unavailable' }));
+  return json(result, response.status, requestIdValue, env);
+}
+
+async function handleSync(request, env, id) {
+  const code = readCode(request);
+  if (!code) return json({ error: 'invalid_code' }, 401, id, env);
+  const key = await keyFor(code);
+  if (!coordinator(env, key)) return json({ error: 'storage_unavailable' }, 503, id, env);
+  if (request.method === 'GET') return forward(env, code, '/api/sync', 'GET', undefined, id);
+  if (request.method === 'DELETE') return forward(env, code, '/internal/delete', 'DELETE', undefined, id);
+  if (request.method !== 'PUT') return json({ error: 'method_not_allowed' }, 405, id, env);
+
+  const parsed = await parseBody(request);
+  if (parsed.error) return json({ error: parsed.error }, parsed.status, id, env);
+  const body = parsed.body;
+  const protocol = body?.protocol ?? 1;
+  if (!Number.isInteger(protocol) || protocol < 1 || protocol > 2) return json({ error: 'unsupported_protocol' }, 426, id, env);
+  if (protocol === 2 && (!DEVICE_RE.test(String(body?.deviceId ?? '')) || !Number.isInteger(body?.lastRevision) || body.lastRevision < 0 || !PROOF_RE.test(String(body?.deviceProof ?? '')))) return json({ error: 'invalid_acknowledgement' }, 422, id, env);
+  if (!body?.state) return json({ error: 'invalid_state' }, 422, id, env);
+  const validation = validateState(body.state);
+  if (!validation.ok) return json({ error: validation.code }, validation.code === 'too_large' ? 413 : 422, id, env);
+  return forward(env, code, '/api/sync', 'PUT', { ...body, protocol }, id);
+}
+
+async function handleRotate(request, env, id) {
+  const code = readCode(request);
+  if (!code) return json({ error: 'invalid_code' }, 401, id, env);
+  if (request.method !== 'POST') return json({ error: 'method_not_allowed' }, 405, id, env);
+  const legacyKey = await keyFor(code);
+  const oldCoordinator = coordinator(env, legacyKey);
+  if (!oldCoordinator) return json({ error: 'storage_unavailable' }, 503, id, env);
+  const preparedResponse = await oldCoordinator.fetch(new Request('https://coordinator.internal/internal/prepare-rotation', {
+    method: 'POST', headers: { 'x-sync-code': code }
+  }));
+  const prepared = await preparedResponse.json().catch(() => null);
+  if (!preparedResponse.ok || !CODE_RE.test(prepared?.code ?? '')) return json({ error: 'rotation_failed' }, preparedResponse.status || 503, id, env);
+  const replacement = prepared.code;
+  const exportedResponse = await oldCoordinator.fetch(new Request('https://coordinator.internal/internal/export', {
+    headers: { 'x-sync-code': code, 'x-legacy-key': legacyKey }
+  }));
+  const exported = await exportedResponse.json().catch(() => null);
+  if (!exportedResponse.ok) return json({ error: exported?.error ?? 'rotation_failed' }, exportedResponse.status, id, env);
+  const newCoordinator = coordinator(env, await keyFor(replacement));
+  const imported = await newCoordinator.fetch(new Request('https://coordinator.internal/internal/import', {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json', 'x-sync-code': replacement },
+    body: JSON.stringify({ state: exported.state, revision: exported.revision, devices: exported.devices, pruned: exported.pruned })
+  }));
+  if (!imported.ok) return json({ error: 'rotation_failed' }, 503, id, env);
+  const revoked = await oldCoordinator.fetch(new Request('https://coordinator.internal/internal/revoke', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-sync-code': code, 'x-legacy-key': legacyKey },
+    body: JSON.stringify({ replacement })
+  }));
+  if (!revoked.ok) return json({ error: 'rotation_failed' }, 503, id, env);
+  return json({ code: replacement }, 200, id, env);
+}
+
+async function handlePrune(request, env, id) {
+  const code = readCode(request);
+  if (!code) return json({ error: 'invalid_code' }, 401, id, env);
+  if (request.method !== 'POST') return json({ error: 'method_not_allowed' }, 405, id, env);
+  const parsed = await parseBody(request);
+  if (parsed.error) return json({ error: parsed.error }, parsed.status, id, env);
+  if (!DEVICE_RE.test(String(parsed.body?.deviceId ?? '')) || !Number.isInteger(parsed.body.acknowledgedRevision) || parsed.body.acknowledgedRevision < 0 || !PROOF_RE.test(String(parsed.body?.deviceProof ?? ''))) return json({ error: 'invalid_acknowledgement' }, 422, id, env);
+  return forward(env, code, '/internal/prune', 'POST', parsed.body, id);
+}
+
+async function health(env, id) {
+  const ready = Boolean(env.SYNC_COORDINATOR && env.SYNC);
+  return json({
+    status: ready ? 'ok' : 'degraded',
+    version: env.VERSION ?? VERSION,
+    environment: env.ENVIRONMENT ?? 'unknown',
+    storageMode: 'durable-object',
+    bindings: { sync: Boolean(env.SYNC), coordinator: Boolean(env.SYNC_COORDINATOR), assets: Boolean(env.ASSETS) }
+  }, ready ? 200 : 503, id, env);
 }
 
 export default {
   async fetch(request, env) {
+    const id = requestId();
+    const started = Date.now();
     const url = new URL(request.url);
-    if (url.pathname === '/api/sync') return handleSync(request, env);
-    if (url.pathname.startsWith('/api/')) return json({ error: 'Not found.' }, 404);
-    return env.ASSETS.fetch(request);
+    let response;
+    try {
+      if (url.pathname.startsWith('/api/sync') && !allowSyncRequest(request)) response = json({ error: 'rate_limited' }, 429, id, env);
+      else if (url.pathname === '/api/health' && request.method === 'GET') response = await health(env, id);
+      else if (url.pathname === '/api/sync/rotate') response = await handleRotate(request, env, id);
+      else if (url.pathname === '/api/sync/prune') response = await handlePrune(request, env, id);
+      else if (url.pathname === '/api/sync') response = await handleSync(request, env, id);
+      else if (url.pathname.startsWith('/api/')) response = json({ error: 'not_found' }, 404, id, env);
+      else response = await assetResponse(request, env, id);
+    } catch {
+      response = json({ error: 'internal_error' }, 500, id, env);
+    } finally {
+      console.log(JSON.stringify({
+        requestId: id,
+        environment: env.ENVIRONMENT ?? 'unknown',
+        route: url.pathname.startsWith('/api/') ? url.pathname : '/asset',
+        method: request.method,
+        status: response?.status ?? 500,
+        durationMs: Date.now() - started,
+        payloadBucket: byteBucket(request),
+        countBucket: 'unknown',
+        revision: 'unknown',
+        migrationMode: url.pathname.startsWith('/api/sync') ? 'legacy-compatible' : 'none',
+        errorCode: statusError(response?.status ?? 500)
+      }));
+    }
+    return response;
   }
 };
+
+export { keyFor, readCode, SyncCoordinator };
