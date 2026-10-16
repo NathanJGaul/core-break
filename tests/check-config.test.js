@@ -1,10 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 
-function runCheck(...args) {
+const PLACEHOLDER_NAMESPACE_ID = 'REPLACE_WITH_YOUR_KV_NAMESPACE_ID';
+const PREFLIGHT_INPUTS = ['scripts/check-config.mjs', 'worker/version.js', 'package.json', 'public/sw.js'];
+
+function runCheck(root, ...args) {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ['scripts/check-config.mjs', ...args], { cwd: process.cwd() });
+    const child = spawn(process.execPath, ['scripts/check-config.mjs', ...args], { cwd: root });
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (chunk) => { stdout += chunk; });
@@ -14,12 +20,32 @@ function runCheck(...args) {
   });
 }
 
+// The preflight reads its inputs relative to its own location, so the test runs a copy of it next to a
+// wrangler.jsonc whose SYNC namespace id is the placeholder. This keeps the test independent of the real id.
+async function withPlaceholderRoot(run) {
+  const root = await mkdtemp(join(tmpdir(), 'core-break-preflight-'));
+  try {
+    for (const file of PREFLIGHT_INPUTS) {
+      await mkdir(dirname(join(root, file)), { recursive: true });
+      await copyFile(file, join(root, file));
+    }
+    const wrangler = await readFile('wrangler.jsonc', 'utf8');
+    const withPlaceholder = wrangler.replace(/("binding"\s*:\s*"SYNC"[^}]*?"id"\s*:\s*)"[^"]*"/, (_, head) => `${head}"${PLACEHOLDER_NAMESPACE_ID}"`);
+    await writeFile(join(root, 'wrangler.jsonc'), withPlaceholder);
+    return await run(root);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
 test('configuration preflight distinguishes local checks from deployment placeholders', async () => {
-  const local = await runCheck('--local');
+  const local = await runCheck(process.cwd(), '--local');
   assert.equal(local.status, 0);
   assert.match(local.stdout, /Configuration preflight passed/);
 
-  const deploy = await runCheck();
-  assert.equal(deploy.status, 1);
-  assert.match(deploy.stderr, /placeholder KV namespace ID is not deployable/);
+  await withPlaceholderRoot(async (placeholder) => {
+    const deploy = await runCheck(placeholder);
+    assert.equal(deploy.status, 1);
+    assert.match(deploy.stderr, /placeholder KV namespace ID is not deployable/);
+  });
 });
