@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 const PLACEHOLDER_NAMESPACE_ID = 'REPLACE_WITH_YOUR_KV_NAMESPACE_ID';
+const SYNC_NAMESPACE_ID = /("binding"\s*:\s*"SYNC"[^}]*?"id"\s*:\s*)"[^"]*"/;
 const PREFLIGHT_INPUTS = ['scripts/check-config.mjs', 'worker/version.js', 'package.json', 'public/sw.js'];
 
 function runCheck(root, ...args) {
@@ -30,7 +31,8 @@ async function withPlaceholderRoot(run) {
       await copyFile(file, join(root, file));
     }
     const wrangler = await readFile('wrangler.jsonc', 'utf8');
-    const withPlaceholder = wrangler.replace(/("binding"\s*:\s*"SYNC"[^}]*?"id"\s*:\s*)"[^"]*"/, (_, head) => `${head}"${PLACEHOLDER_NAMESPACE_ID}"`);
+    assert.match(wrangler, SYNC_NAMESPACE_ID, 'wrangler.jsonc has no SYNC KV namespace id to replace with the placeholder');
+    const withPlaceholder = wrangler.replace(SYNC_NAMESPACE_ID, (_, head) => `${head}"${PLACEHOLDER_NAMESPACE_ID}"`);
     await writeFile(join(root, 'wrangler.jsonc'), withPlaceholder);
     return await run(root);
   } finally {
