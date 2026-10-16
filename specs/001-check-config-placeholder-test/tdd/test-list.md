@@ -4,7 +4,7 @@ loop: outside-in
 profile: .specify/memory/tdd-profile.md
 spec_criteria: 4
 planned_at: b2c21b7
-updated_at: b2c21b7
+updated_at: a4f4772
 suite_baseline: red
 ---
 
@@ -17,10 +17,10 @@ No production code changes, so every behavior is exercised by the existing test 
 
 | id | behavior | traces | kind | state | test |
 | --- | --- | --- | --- | --- | --- |
-| A1 | Deploy-mode preflight on a configuration holding the placeholder SYNC KV id exits 1 and reports `placeholder KV namespace ID is not deployable` | AC-1, FR-001, FR-004 | example | PENDING | `tests/check-config.test.js::configuration preflight distinguishes local checks from deployment placeholders` |
-| A2 | Local-mode preflight on the same placeholder configuration exits 0 and reports `Configuration preflight passed` | AC-2, FR-002 | characterization | PENDING | same test |
+| A1 | Deploy-mode preflight on a configuration holding the placeholder SYNC KV id exits 1 and reports `placeholder KV namespace ID is not deployable` | AC-1, FR-001, FR-004 | example | DONE | `tests/check-config.test.js::configuration preflight distinguishes local checks from deployment placeholders` |
+| A2 | Local-mode preflight on the same placeholder configuration exits 0 and reports `Configuration preflight passed` | AC-2, FR-002 | characterization | BASELINE | same test (green on first run, bites under mutant M1, cycle 2) |
 | A3 | Local-mode preflight on the committed repository configuration exits 0 and reports `Configuration preflight passed` | AC-3, FR-003 | characterization | BASELINE | same test (assertion already present and green at baseline) |
-| A4 | The full suite passes | AC-4, SC-001 | example | PENDING | `npm test` |
+| A4 | The full suite passes | AC-4, SC-001 | example | DONE | `npm test` |
 
 ## Inner loop: unit behaviors
 
@@ -28,7 +28,7 @@ No production code changes, so every behavior is exercised by the existing test 
 
 | id | behavior | traces | kind | state | test |
 | --- | --- | --- | --- | --- | --- |
-| U1 | A placeholder replacement that did not apply fails the test with a message naming the problem instead of passing or failing downstream | FR-005 | example | PENDING | guard assertion inside the builder, proven by a mutant of the replacement pattern |
+| U1 | A placeholder replacement that did not apply fails the test with a message naming the problem instead of passing or failing downstream | FR-005 | example | DONE | guard assertion inside the builder, proven by a mutant of the replacement pattern |
 
 ## Invariants and edge cases still to place
 
