@@ -42,16 +42,16 @@ async function withPlaceholderRoot(run) {
 
 test('configuration preflight distinguishes local checks from deployment placeholders', async () => {
   const local = await runCheck(process.cwd(), '--local');
-  assert.equal(local.status, 0);
-  assert.match(local.stdout, /Configuration preflight passed/);
+  assert.equal(local.status, 0, 'committed configuration, local mode: exit status');
+  assert.match(local.stdout, /Configuration preflight passed/, 'committed configuration, local mode: output');
 
   await withPlaceholderRoot(async (placeholder) => {
     const placeholderLocal = await runCheck(placeholder, '--local');
-    assert.equal(placeholderLocal.status, 0);
-    assert.match(placeholderLocal.stdout, /Configuration preflight passed/);
+    assert.equal(placeholderLocal.status, 0, 'placeholder configuration, local mode: exit status');
+    assert.match(placeholderLocal.stdout, /Configuration preflight passed/, 'placeholder configuration, local mode: output');
 
     const deploy = await runCheck(placeholder);
-    assert.equal(deploy.status, 1);
-    assert.match(deploy.stderr, /placeholder KV namespace ID is not deployable/);
+    assert.equal(deploy.status, 1, 'placeholder configuration, deploy mode: exit status');
+    assert.match(deploy.stderr, /placeholder KV namespace ID is not deployable/, 'placeholder configuration, deploy mode: output');
   });
 });
