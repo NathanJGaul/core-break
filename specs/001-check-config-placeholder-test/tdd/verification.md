@@ -104,3 +104,5 @@ Tests tracing to nothing: none.
 ## Remediation tasks
 
 Recorded in `tasks.md` as T011.
+T011 was completed after this audit in commit `9526c5c`, and mutants M1 and M5 were re-run against the labelled assertions and now name the assertion that broke.
+The verdict is unchanged because the remaining gaps are the missing mutation tool and the mutant-based evidence for U1.

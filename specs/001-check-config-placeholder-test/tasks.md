@@ -16,15 +16,15 @@ The deliverable is itself a test, so the test tasks are the behavior work and no
 
 - [x] T005 [A1] Implement `withPlaceholderRoot(run)` in `tests/check-config.test.js` in place of the stub: create a temporary directory, copy `scripts/check-config.mjs`, `worker/version.js`, `package.json` and `public/sw.js`, write `wrangler.jsonc` with the SYNC namespace id replaced by the placeholder, run the callback against the directory and remove it in a `finally` block.
 - [x] T006 [A1] Change `runCheck` in `tests/check-config.test.js` to take the root directory to run in.
-- [ ] T007 Leave `scripts/check-config.mjs`, `wrangler.jsonc` and every other tracked file untouched, and confirm with `git diff --stat`.
+- [x] T007 Leave `scripts/check-config.mjs`, `wrangler.jsonc` and every other tracked file untouched, and confirm with `git diff --stat`.
 
 ## Remediation and verification
 
-- [ ] T008 [A4] Run `npm test`, `npm run check` and `npm run build` and record the counts.
-- [ ] T009 Run the deliberate mutants against the preflight and the test input, restore each exactly, and record the results in `tdd/verification.md`.
-- [ ] T010 Run the checklist, analyze and converge steps and record the findings in `checklist.md`, `analyze.md` and `converge.md`.
+- [x] T008 [A4] Run `npm test`, `npm run check` and `npm run build` and record the counts.
+- [x] T009 Run the deliberate mutants against the preflight and the test input, restore each exactly, and record the results in `tdd/verification.md`.
+- [x] T010 Run the checklist, analyze and converge steps and record the findings in `checklist.md`, `analyze.md` and `converge.md`.
 
 ## Phase 4: TDD remediation
 
-- [ ] T011 Finding 1 (MED, `tests/check-config.test.js:45-55`): add a message to each of the six assertions naming the root (committed or placeholder) and mode (local or deploy), so two failures such as mutants M1 and M5 no longer print the same `1 !== 0`.
+- [x] T011 Finding 1 (MED, `tests/check-config.test.js:45-55`): add a message to each of the six assertions naming the root (committed or placeholder) and mode (local or deploy), so two failures such as mutants M1 and M5 no longer print the same `1 !== 0`.
   Done when `node --test-name-pattern "configuration preflight distinguishes" tests/check-config.test.js` passes and re-running mutant M1 (`!local &&` removed in `scripts/check-config.mjs`) fails with a message that names the placeholder local-mode assertion.

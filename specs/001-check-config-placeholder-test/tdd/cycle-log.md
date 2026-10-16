@@ -57,3 +57,13 @@ Append only. Newest last. Every entry's `red` block is the evidence that the tes
   The red state was never committed.
 - Cycles 2 and 3 are mutant-first rather than test-first by nature: A2 characterizes behavior the preflight already has, and U1 is a guard inside test code that cannot be tested without exporting the helper, which would add production-shaped surface for no benefit.
 - Task ticks: T001 to T006 are covered by the completed behaviors A1, A2, A3 and U1.
+
+## Remediation 1: verification finding 1, label the preflight assertions
+
+- change: each of the six assertions in the test gained a message naming the root (committed or placeholder) and mode (local or deploy).
+  Structural diagnostics change on green, no behavior change, so no new red; the proof is the mutant rerun below.
+- green before and after: single test `ℹ tests 1`, `ℹ pass 1`; suite `npm test` -> 34 passed, 0 failed; `npm run check` passed; `npm run build` succeeded.
+- mutant rerun: M1 (`!local &&` removed) now fails with `placeholder configuration, local mode: exit status`; M5 (`{32}` to `{33}`) now fails with `committed configuration, local mode: exit status`.
+  Both were restored with `git checkout`, and `git diff` showed only the intended test change.
+- refactor: none needed
+- commit: `9526c5c`
