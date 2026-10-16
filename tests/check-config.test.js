@@ -44,6 +44,10 @@ test('configuration preflight distinguishes local checks from deployment placeho
   assert.match(local.stdout, /Configuration preflight passed/);
 
   await withPlaceholderRoot(async (placeholder) => {
+    const placeholderLocal = await runCheck(placeholder, '--local');
+    assert.equal(placeholderLocal.status, 0);
+    assert.match(placeholderLocal.stdout, /Configuration preflight passed/);
+
     const deploy = await runCheck(placeholder);
     assert.equal(deploy.status, 1);
     assert.match(deploy.stderr, /placeholder KV namespace ID is not deployable/);
